@@ -1,4 +1,20 @@
 name: MineBackupPlugin
-version: '1.0-SNAPSHOT'
+version: '${version}'
 main: org.leafuke.mineBackupPlugin.MineBackupPlugin
 api-version: '1.21'
+description: MineBackup 联动插件 - 通过 KnotLink 协议与 MineBackup 主程序通信
+
+commands:
+  mb:
+    description: MineBackup 主命令
+    usage: /mb <子命令> [参数...]
+    permission: minebackup.command
+  minebackup:
+    description: 旧版命令（已迁移至 /mb）
+    usage: /minebackup
+    permission: minebackup.command
+
+permissions:
+  minebackup.command:
+    description: 允许使用 MineBackup 命令
+    default: op
