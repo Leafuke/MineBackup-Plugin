@@ -1,0 +1,4 @@
+name: MineBackupPlugin
+version: '1.0-SNAPSHOT'
+main: org.leafuke.mineBackupPlugin.MineBackupPlugin
+api-version: '1.21'
