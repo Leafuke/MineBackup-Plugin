@@ -1,8 +1,8 @@
 # MineBackup-Plugin
 
-MineBackup-Plugin 是一款基于 Minecraft 1.21 的 Spigot 插件。作为 [MineBackup](https://github.com/Leafuke/MineBackup/releases)/[FolderRewind](https://github.com/Leafuke/FolderRewind/releases) 的联动组件，它通过 [KnotLink](https://github.com/hxh230802/KnotLink) 协议与主程序进行通信，实现跨端的数据同步与信号广播。
+MineBackup-Plugin 是一款基于 Minecraft 1.21 的 Spigot 插件。作为 [MineBackup](https://github.com/Leafuke/MineBackup/releases)/[FolderRewind](https://github.com/Leafuke/FolderRewind/releases) 的联动组件，它通过 [KnotLink](https://github.com/hxh230802/KnotLink) 协议与主程序进行通信，实现跨端的数据同步与信号广播。能够实现备份、还原、自动备份等功能的远程控制。
 
-模组版本见 [MineBackup-Mod](https://github.com/Leafuke/MineBackup-Mod) 。
+模组版本见 [MineBackup-Mod](https://github.com/Leafuke/MineBackup-Mod) 。相比模组版本，插件版本为服务端使用进行了许多优化。
 
 ## 特性
 
@@ -38,5 +38,8 @@ MineBackup-Plugin 是一款基于 Minecraft 1.21 的 Spigot 插件。作为 [Min
 | **/mb stop** | `<config_id> <world_index>` | 请求 MineBackup 停止自动备份任务 |
 | **/mb quicksave** | `[注释]` | 为当前世界执行备份 |
 | **/mb quickrestore** | `[文件名]` | 为当前世界执行热还原，不填写文件名则自动选择最新的备份文件 |
+| **/mb confirm** | (无) | 确认执行热还原 |
+| **/mb abort** | (无) | 取消即将进行的热还原 |
+| **/mb reload** | (无) | 重载配置 |
 
 **插件与模组的具体执行行为存在差异**，使用过程中务必留意。
