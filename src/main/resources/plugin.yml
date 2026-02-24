@@ -2,7 +2,7 @@ name: MineBackupPlugin
 version: '${version}'
 main: org.leafuke.mineBackupPlugin.MineBackupPlugin
 api-version: '1.21'
-description: MineBackup 联动插件 - 通过 KnotLink 协议与 MineBackup 主程序通信
+description: MineBackup 联动插件 - 通过 KnotLink 协议与 MineBackup 主程序通信，支持还原倒计时、自动重启、操作审计日志
 
 commands:
   mb:

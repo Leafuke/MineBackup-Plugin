@@ -15,7 +15,16 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * MineBackup 命令处理器
- * 处理所有 /mb 子命令以及 Tab 补全
+ * <p>
+ * 处理所有 /mb 子命令以及 Tab 补全。
+ * <p>
+ * 新增子命令:
+ * <ul>
+ *   <li>{@code /mb confirm} — 确认待处理的还原操作</li>
+ *   <li>{@code /mb abort}   — 取消正在进行的还原倒计时</li>
+ *   <li>{@code /mb status}  — 显示插件状态摘要</li>
+ *   <li>{@code /mb reload}  — 重新加载配置文件</li>
+ * </ul>
  */
 public class MbCommand implements CommandExecutor, TabCompleter {
 
@@ -39,7 +48,8 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private static final List<String> SUBCOMMANDS = Arrays.asList(
             "save", "list_configs", "list_worlds", "list_backups",
             "backup", "restore", "quicksave", "quickrestore",
-            "auto", "stop", "snap"
+            "auto", "stop", "snap",
+            "confirm", "abort", "status", "reload"
     );
 
     public MbCommand(MineBackupPlugin plugin) {
@@ -55,17 +65,21 @@ public class MbCommand implements CommandExecutor, TabCompleter {
 
         String sub = args[0].toLowerCase();
         switch (sub) {
-            case "save" -> handleSave(sender);
-            case "list_configs" -> handleListConfigs(sender);
-            case "list_worlds" -> handleListWorlds(sender, args);
-            case "list_backups" -> handleListBackups(sender, args);
-            case "backup" -> handleBackup(sender, args);
-            case "restore" -> handleRestore(sender, args);
-            case "quicksave" -> handleQuicksave(sender, args);
-            case "quickrestore" -> handleQuickrestore(sender, args);
-            case "auto" -> handleAuto(sender, args);
-            case "stop" -> handleStop(sender, args);
-            case "snap" -> handleSnap(sender, args);
+            case "save"           -> handleSave(sender);
+            case "list_configs"   -> handleListConfigs(sender);
+            case "list_worlds"    -> handleListWorlds(sender, args);
+            case "list_backups"   -> handleListBackups(sender, args);
+            case "backup"         -> handleBackup(sender, args);
+            case "restore"        -> handleRestore(sender, args);
+            case "quicksave"      -> handleQuicksave(sender, args);
+            case "quickrestore"   -> handleQuickrestore(sender, args);
+            case "auto"           -> handleAuto(sender, args);
+            case "stop"           -> handleStop(sender, args);
+            case "snap"           -> handleSnap(sender, args);
+            case "confirm"        -> handleConfirm(sender);
+            case "abort"          -> handleAbort(sender);
+            case "status"         -> handleStatus(sender);
+            case "reload"         -> handleReload(sender);
             default -> plugin.getLanguageManager().sendMessage(sender, "minebackup.usage");
         }
         return true;
@@ -85,6 +99,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleListConfigs(CommandSender sender) {
         plugin.getLanguageManager().sendMessage(sender, "minebackup.list_configs.start");
+        plugin.getBackupLogger().debug("COMMAND", sender.getName() + " 执行 list_configs");
         queryBackend("LIST_CONFIGS", response ->
                 handleListConfigsResponse(sender, response));
     }
@@ -154,11 +169,13 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         } else {
             cmd = String.format("BACKUP %d %d", configId, worldIndex);
         }
+
+        plugin.getBackupLogger().info("BACKUP", sender.getName() + " 发起备份: " + cmd);
         executeRemoteCommand(sender, cmd);
     }
 
     /**
-     * /mb restore <config_id> <world_index> <backup_file> - 执行还原
+     * /mb restore <config_id> <world_index> <backup_file> - 执行还原（带确认+倒计时）
      */
     private void handleRestore(CommandSender sender, String[] args) {
         if (args.length < 4) {
@@ -175,7 +192,9 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         }
         String backupFile = args[3];
         String cmd = String.format("RESTORE %d %d %s", configId, worldIndex, backupFile);
-        executeRemoteCommand(sender, cmd);
+
+        // 使用 RestoreTask 流水线（确认 → 倒计时 → 执行）
+        startRestoreWithPipeline(sender, cmd);
     }
 
     /**
@@ -183,24 +202,30 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleQuicksave(CommandSender sender, String[] args) {
         saveAllWorlds(sender);
+        String cmd;
         if (args.length > 1) {
             String comment = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
-            executeRemoteCommand(sender, "BACKUP_CURRENT " + comment);
+            cmd = "BACKUP_CURRENT " + comment;
         } else {
-            executeRemoteCommand(sender, "BACKUP_CURRENT");
+            cmd = "BACKUP_CURRENT";
         }
+        plugin.getBackupLogger().info("BACKUP", sender.getName() + " 发起快速保存: " + cmd);
+        executeRemoteCommand(sender, cmd);
     }
 
     /**
-     * /mb quickrestore [backup_file] - 快速还原当前世界
+     * /mb quickrestore [backup_file] - 快速还原当前世界（带确认+倒计时）
      */
     private void handleQuickrestore(CommandSender sender, String[] args) {
+        String cmd;
         if (args.length > 1) {
-            String backupFile = args[1];
-            executeRemoteCommand(sender, "RESTORE_CURRENT " + backupFile);
+            cmd = "RESTORE_CURRENT " + args[1];
         } else {
-            executeRemoteCommand(sender, "RESTORE_CURRENT_LATEST");
+            cmd = "RESTORE_CURRENT_LATEST";
         }
+
+        // 使用 RestoreTask 流水线
+        startRestoreWithPipeline(sender, cmd);
     }
 
     /**
@@ -222,6 +247,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         }
         Config.setAutoBackup(plugin, configId, worldIndex, internalTime);
         String cmd = String.format("AUTO_BACKUP %d %d %d", configId, worldIndex, internalTime);
+        plugin.getBackupLogger().info("AUTO_BACKUP", sender.getName() + " 设置自动备份: " + cmd);
         executeRemoteCommand(sender, cmd);
     }
 
@@ -243,6 +269,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         }
         Config.clearAutoBackup(plugin);
         String cmd = String.format("STOP_AUTO_BACKUP %d %d", configId, worldIndex);
+        plugin.getBackupLogger().info("AUTO_BACKUP", sender.getName() + " 停止自动备份: " + cmd);
         executeRemoteCommand(sender, cmd);
     }
 
@@ -268,6 +295,128 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         queryBackend(cmd, response -> handleGenericResponse(sender, response, "snap"));
     }
 
+    /**
+     * /mb confirm - 确认待处理的还原操作
+     */
+    private void handleConfirm(CommandSender sender) {
+        RestoreTask task = RestoreTask.getCurrentTask();
+        if (task != null && task.confirm()) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.confirm.success");
+            plugin.getBackupLogger().info("RESTORE", sender.getName() + " 确认了还原操作");
+        } else {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.confirm.no_task");
+        }
+    }
+
+    /**
+     * /mb abort - 取消正在进行的还原操作
+     */
+    private void handleAbort(CommandSender sender) {
+        RestoreTask task = RestoreTask.getCurrentTask();
+        if (task != null && task.abort(sender.getName())) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.abort.success");
+            plugin.getBackupLogger().info("RESTORE", sender.getName() + " 取消了还原操作");
+        } else {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.abort.no_task");
+        }
+    }
+
+    /**
+     * /mb status - 显示插件状态信息
+     */
+    private void handleStatus(CommandSender sender) {
+        LanguageManager lm = plugin.getLanguageManager();
+        StringBuilder sb = new StringBuilder();
+
+        // 标题
+        sb.append(lm.getTranslation(sender, "minebackup.status.title")).append("\n");
+
+        // 插件版本
+        sb.append(lm.getTranslation(sender, "minebackup.status.version",
+                MineBackupPlugin.PLUGIN_VERSION)).append("\n");
+
+        // KnotLink 连接状态
+        String connStatus = HotRestoreState.handshakeCompleted
+                ? lm.getTranslation(sender, "minebackup.status.connected")
+                : lm.getTranslation(sender, "minebackup.status.not_connected");
+        sb.append(lm.getTranslation(sender, "minebackup.status.connection", connStatus)).append("\n");
+
+        // 主程序版本
+        if (HotRestoreState.handshakeCompleted && HotRestoreState.mainProgramVersion != null) {
+            sb.append(lm.getTranslation(sender, "minebackup.status.main_version",
+                    HotRestoreState.mainProgramVersion)).append("\n");
+
+            // 兼容性
+            String compat = HotRestoreState.versionCompatible
+                    ? lm.getTranslation(sender, "minebackup.status.compatible")
+                    : lm.getTranslation(sender, "minebackup.status.incompatible");
+            sb.append(lm.getTranslation(sender, "minebackup.status.compatibility", compat)).append("\n");
+        }
+
+        // 还原状态
+        RestoreTask task = RestoreTask.getCurrentTask();
+        String restoreStatus;
+        if (task != null && task.getPhase() != RestoreTask.Phase.NONE) {
+            restoreStatus = lm.getTranslation(sender, "minebackup.status.restore_active",
+                    task.getPhase().getDisplayName(), task.getInitiator());
+        } else {
+            restoreStatus = lm.getTranslation(sender, "minebackup.status.restore_none");
+        }
+        sb.append(lm.getTranslation(sender, "minebackup.status.restore_state", restoreStatus)).append("\n");
+
+        // 自动备份
+        String autoStatus;
+        if (Config.hasAutoBackup()) {
+            autoStatus = lm.getTranslation(sender, "minebackup.status.auto_backup_on",
+                    String.valueOf(Config.getConfigId()),
+                    String.valueOf(Config.getWorldIndex()),
+                    String.valueOf(Config.getInternalTime()));
+        } else {
+            autoStatus = lm.getTranslation(sender, "minebackup.status.auto_backup_off");
+        }
+        sb.append(lm.getTranslation(sender, "minebackup.status.auto_backup", autoStatus)).append("\n");
+
+        // 调试模式
+        String debugStatus = Config.isDebug()
+                ? lm.getTranslation(sender, "minebackup.status.debug_on")
+                : lm.getTranslation(sender, "minebackup.status.debug_off");
+        sb.append(lm.getTranslation(sender, "minebackup.status.debug", debugStatus));
+
+        sender.sendMessage(sb.toString());
+    }
+
+    /**
+     * /mb reload - 重新加载配置
+     */
+    private void handleReload(CommandSender sender) {
+        try {
+            Config.reload(plugin);
+            plugin.getBackupLogger().reinitialize();
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.reload.success");
+            plugin.getBackupLogger().info("SYSTEM", sender.getName() + " 重新加载了配置");
+        } catch (Exception e) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.reload.fail");
+            plugin.getBackupLogger().error("SYSTEM", "重新加载配置失败: " + e.getMessage());
+        }
+    }
+
+    // ==================== 还原流水线 ====================
+
+    /**
+     * 启动 "确认 → 倒计时 → 执行" 还原流水线
+     */
+    private void startRestoreWithPipeline(CommandSender sender, String restoreCommand) {
+        if (RestoreTask.hasActiveTask()) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.restore.already_running");
+            return;
+        }
+
+        RestoreTask task = new RestoreTask(plugin, restoreCommand, sender.getName());
+        if (!task.start()) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.restore.already_running");
+        }
+    }
+
     // ==================== Tab 补全 ====================
 
     @Override
@@ -287,7 +436,6 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         switch (sub) {
             case "list_worlds", "list_configs" -> {
                 // list_worlds 需要 config_id，list_configs 无参数
-                // 不提供数字补全
             }
             case "list_backups", "backup", "auto", "stop" -> {
                 // 这些命令的参数都是数字，不提供补全
@@ -324,13 +472,25 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void saveAllWorlds(CommandSender sender) {
         plugin.getLanguageManager().sendMessage(sender, "minebackup.save.start");
+
+        long saveStart = System.currentTimeMillis();
+        int worldCount = 0;
+        boolean allSuccess = true;
+
         for (World world : Bukkit.getWorlds()) {
             try {
                 world.save();
+                worldCount++;
             } catch (Exception e) {
-                plugin.getLogger().warning("[MineBackup] 保存世界 " + world.getName() + " 失败: " + e.getMessage());
+                plugin.getBackupLogger().error("SAVE", "保存世界 '"
+                        + world.getName() + "' 失败: " + e.getMessage());
+                allSuccess = false;
             }
         }
+
+        long saveCost = System.currentTimeMillis() - saveStart;
+        plugin.getBackupLogger().info("SAVE", sender.getName() + " 保存了 " + worldCount
+                + " 个世界，耗时 " + saveCost + "ms" + (allSuccess ? "" : " (部分失败)"));
         plugin.getLanguageManager().sendMessage(sender, "minebackup.save.success");
     }
 
@@ -345,12 +505,12 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         }
         future
             .exceptionally(ex -> {
-                plugin.getLogger().severe("与 MineBackup 主程序通信异常: " + ex.getMessage());
+                plugin.getBackupLogger().error("COMM", "与 MineBackup 主程序通信异常: " + ex.getMessage());
                 return "ERROR:COMMUNICATION_FAILED";
             })
             .thenAccept(resp -> {
                 try { callback.accept(resp); } catch (Exception e) {
-                    plugin.getLogger().severe("处理后端响应时发生异常: " + e.getMessage());
+                    plugin.getBackupLogger().error("COMM", "处理后端响应时发生异常: " + e.getMessage());
                 }
             });
     }
@@ -374,10 +534,14 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private void handleGenericResponse(CommandSender sender, String response, String commandType) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response != null && response.startsWith("ERROR:")) {
-                plugin.getLanguageManager().sendMessage(sender, "minebackup.command.fail", Messages.localizeError(sender, response));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.command.fail",
+                        Messages.localizeError(sender, response));
+                plugin.getBackupLogger().warn("COMMAND", "命令 '" + commandType
+                        + "' 失败: " + response);
             } else {
                 plugin.getLanguageManager().sendMessage(sender, "minebackup.generic.response",
-                        response != null ? response : plugin.getLanguageManager().getTranslation(sender, "minebackup.no_response"));
+                        response != null ? response
+                                : plugin.getLanguageManager().getTranslation(sender, "minebackup.no_response"));
             }
         });
     }
@@ -388,10 +552,12 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private void handleListConfigsResponse(CommandSender sender, String response) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
-                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_configs.fail", Messages.localizeError(sender, response));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_configs.fail",
+                        Messages.localizeError(sender, response));
                 return;
             }
-            StringBuilder result = new StringBuilder(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_configs.title"));
+            StringBuilder result = new StringBuilder(
+                    plugin.getLanguageManager().getTranslation(sender, "minebackup.list_configs.title"));
             String data = response.substring(3);
             if (data.isEmpty()) {
                 result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_configs.empty"));
@@ -399,7 +565,8 @@ public class MbCommand implements CommandExecutor, TabCompleter {
                 for (String config : data.split(";")) {
                     String[] parts = config.split(",", 2);
                     if (parts.length == 2) {
-                        result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_configs.entry", parts[0], parts[1]));
+                        result.append(plugin.getLanguageManager().getTranslation(sender,
+                                "minebackup.list_configs.entry", parts[0], parts[1]));
                     }
                 }
             }
@@ -413,19 +580,21 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private void handleListWorldsResponse(CommandSender sender, String response, int configId) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
-                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_worlds.fail", Messages.localizeError(sender, response));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_worlds.fail",
+                        Messages.localizeError(sender, response));
                 return;
             }
             StringBuilder result = new StringBuilder(
-                    plugin.getLanguageManager().getTranslation(sender, "minebackup.list_worlds.title", String.valueOf(configId)));
+                    plugin.getLanguageManager().getTranslation(sender, "minebackup.list_worlds.title",
+                            String.valueOf(configId)));
             String data = response.substring(3);
             if (data.isEmpty()) {
                 result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_worlds.empty"));
             } else {
                 String[] worlds = data.split(";");
                 for (int i = 0; i < worlds.length; i++) {
-                    result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_worlds.entry",
-                            String.valueOf(i), worlds[i]));
+                    result.append(plugin.getLanguageManager().getTranslation(sender,
+                            "minebackup.list_worlds.entry", String.valueOf(i), worlds[i]));
                 }
             }
             sender.sendMessage(result.toString());
@@ -439,18 +608,21 @@ public class MbCommand implements CommandExecutor, TabCompleter {
                                            int configId, int worldIndex) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
-                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_backups.fail", Messages.localizeError(sender, response));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_backups.fail",
+                        Messages.localizeError(sender, response));
                 return;
             }
-            StringBuilder result = new StringBuilder(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_backups.title",
-                    String.valueOf(configId), String.valueOf(worldIndex)));
+            StringBuilder result = new StringBuilder(
+                    plugin.getLanguageManager().getTranslation(sender, "minebackup.list_backups.title",
+                            String.valueOf(configId), String.valueOf(worldIndex)));
             String data = response.substring(3);
             if (data.isEmpty()) {
                 result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_backups.empty"));
             } else {
                 for (String file : data.split(";")) {
                     if (!file.isEmpty()) {
-                        result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_backups.entry", file));
+                        result.append(plugin.getLanguageManager().getTranslation(sender,
+                                "minebackup.list_backups.entry", file));
                     }
                 }
             }
@@ -468,7 +640,6 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         long now = System.currentTimeMillis();
         Long lastTime = backupFilesCacheTime.get(key);
 
-        // 缓存过期则触发异步刷新
         if (lastTime == null || now - lastTime > CACHE_TTL_MS) {
             refreshBackupFilesAsync(configId, worldIndex, key);
         }
@@ -518,7 +689,8 @@ public class MbCommand implements CommandExecutor, TabCompleter {
                         String data = response.substring(3);
                         List<String> files = new ArrayList<>();
                         for (String file : data.split(";")) {
-                            if (!file.isEmpty()) files.add(file);
+                            if (!file.isEmpty()) files.add("'" + file + "'");
+                            // 引号包裹很重要！
                         }
                         currentBackupsCache = files;
                     }

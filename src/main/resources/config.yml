@@ -1,0 +1,67 @@
+# ============================================================
+#  MineBackup Plugin Configuration / MineBackup 插件配置
+#  Spigot 1.21 | https://github.com/leafuke/MineBackup-Plugin
+# ============================================================
+
+# --- 通用设置 / General Settings ---
+general:
+  # 调试模式，输出更详细的日志 / Enable verbose debug logging
+  debug: false
+
+# --- 还原设置 / Restore Settings ---
+restore:
+  # 还原前是否需要玩家输入 /mb confirm 确认
+  # Whether to require /mb confirm before proceeding
+  require-confirm: true
+
+  # 确认超时时间（秒），超时后自动取消
+  # Timeout for confirmation in seconds
+  confirm-timeout-seconds: 60
+
+  # 确认后的倒计时秒数（每秒广播，可用 /mb abort 取消）
+  # Countdown seconds after confirmation (broadcast every second, /mb abort to cancel)
+  countdown-seconds: 10
+
+  # 收到来自 MineBackup 主程序的远程还原请求时是否也启用倒计时
+  # Enable countdown for restores initiated remotely by MineBackup main program
+  remote-restore-countdown: true
+
+  # 远程还原的倒计时秒数
+  # Countdown seconds for remote-initiated restores
+  remote-countdown-seconds: 10
+
+# --- 服务器重启设置 / Server Restart Settings ---
+restart:
+  # 还原后是否自动重启服务器
+  # Whether to auto-restart the server after a restore
+  enabled: true
+
+  # 重启方式 / Restart method:
+  #   spigot  - 使用 Spigot 内置重启（需在 spigot.yml 中配置 restart-script）
+  #   script  - 使用下方 script-path 指定的自定义脚本
+  #   none    - 仅关闭服务器，依赖外部监控自动重启
+  method: spigot
+
+  # 自定义重启脚本路径（仅 method=script 时有效）
+  # Custom restart script path (only used when method=script)
+  script-path: "./start.sh"
+
+# --- 文件日志设置 / File Logging Settings ---
+logging:
+  # 是否将操作日志写入文件（便于服主事后分析）
+  # Whether to write operation logs to file for analysis
+  enabled: true
+
+  # 单个日志文件最大大小（MB）/ Max size per log file in MB
+  max-size-mb: 10
+
+  # 保留的旧日志文件数量 / Number of rotated log files to keep
+  max-files: 5
+
+# --- 自动备份设置 / Auto Backup Settings ---
+# 这些值通常通过 /mb auto 命令设置，也可手动编辑
+# These values are usually set via /mb auto command, or edit manually
+auto-backup:
+  config-id: -1
+  world-index: -1
+  interval-seconds: -1

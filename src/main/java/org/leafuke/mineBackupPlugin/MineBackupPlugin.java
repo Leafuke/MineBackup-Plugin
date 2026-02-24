@@ -12,12 +12,19 @@ import java.util.Map;
 
 /**
  * MineBackup Spigot 插件主入口类
- * 负责初始化 KnotLink 连接，注册命令和处理来自 MineBackup 主程序的广播事件
+ * <p>
+ * 负责：
+ * <ul>
+ *   <li>初始化 KnotLink 连接、注册命令</li>
+ *   <li>处理来自 MineBackup 主程序的广播事件</li>
+ *   <li>管理还原倒计时、自动重启等高级功能</li>
+ *   <li>操作审计日志</li>
+ * </ul>
  */
 public final class MineBackupPlugin extends JavaPlugin {
 
     /** 插件版本号，用于 KnotLink 握手 */
-    public static final String PLUGIN_VERSION = "1.0.0";
+    public static final String PLUGIN_VERSION = "1.1.0";
 
     // KnotLink 通信 ID
     public static final String BROADCAST_APP_ID = "0x00000020";
@@ -28,6 +35,7 @@ public final class MineBackupPlugin extends JavaPlugin {
     private SignalSubscriber knotLinkSubscriber;
     private static MineBackupPlugin instance;
     private LanguageManager languageManager;
+    private BackupLogger backupLogger;
 
     public static MineBackupPlugin getInstance() {
         return instance;
@@ -37,29 +45,54 @@ public final class MineBackupPlugin extends JavaPlugin {
         return languageManager;
     }
 
+    public BackupLogger getBackupLogger() {
+        return backupLogger;
+    }
+
     @Override
     public void onEnable() {
         instance = this;
-        languageManager = new LanguageManager(this);
-        getLogger().info("[MineBackup] 正在初始化 Spigot 1.21 插件版本...");
+        long startTime = System.currentTimeMillis();
 
-        // 初始化 KnotLink 订阅器
+        // ---- 1. 加载配置和语言 ----
+        Config.load(this);
+        languageManager = new LanguageManager(this);
+        backupLogger = new BackupLogger(this);
+
+        backupLogger.info("SYSTEM", "=== MineBackup Spigot Plugin v" + PLUGIN_VERSION + " 正在启动 ===");
+        backupLogger.info("SYSTEM", "Minecraft 服务器: " + Bukkit.getVersion());
+        backupLogger.info("SYSTEM", "Bukkit API: " + Bukkit.getBukkitVersion());
+
+        // ---- 2. 检查是否为还原后重启 ----
+        if (ServerRestartManager.isPostRestoreRestart()) {
+            backupLogger.info("SYSTEM", "检测到服务器从还原后重启");
+            ServerRestartManager.cleanupRestartFlag(backupLogger);
+            HotRestoreState.reset();
+
+            // 延迟广播，等待玩家连接
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                languageManager.broadcastMessage("minebackup.post_restore.detected");
+            }, 100L); // 5 秒延迟
+        }
+
+        // ---- 3. 初始化 KnotLink 订阅器 ----
         knotLinkSubscriber = new SignalSubscriber(BROADCAST_APP_ID, BROADCAST_SIGNAL_ID);
         knotLinkSubscriber.setSignalListener(this::handleBroadcastEvent);
         Thread subscriberThread = new Thread(knotLinkSubscriber::start, "minebackup-subscriber-init");
         subscriberThread.setDaemon(true);
         subscriberThread.start();
+        backupLogger.info("SYSTEM", "KnotLink 订阅器已启动 (appID=" + BROADCAST_APP_ID
+                + ", signalID=" + BROADCAST_SIGNAL_ID + ")");
 
-        // 加载自动备份配置
-        Config.load(this);
+        // ---- 4. 加载自动备份配置 ----
         if (Config.hasAutoBackup()) {
             String cmd = String.format("AUTO_BACKUP %d %d %d",
                     Config.getConfigId(), Config.getWorldIndex(), Config.getInternalTime());
             OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID, cmd);
-            getLogger().info("[MineBackup] 从配置发送自动备份请求: " + cmd);
+            backupLogger.info("AUTO_BACKUP", "从配置发送自动备份请求: " + cmd);
         }
 
-        // 注册命令
+        // ---- 5. 注册命令 ----
         MbCommand mbCommand = new MbCommand(this);
         var mbCmd = getCommand("mb");
         if (mbCmd != null) {
@@ -75,50 +108,52 @@ public final class MineBackupPlugin extends JavaPlugin {
             });
         }
 
-        getLogger().info("[MineBackup] 插件初始化完成。");
+        long elapsed = System.currentTimeMillis() - startTime;
+        backupLogger.info("SYSTEM", "插件初始化完成，耗时 " + elapsed + "ms");
     }
 
     @Override
     public void onDisable() {
+        // 关闭 KnotLink
         if (knotLinkSubscriber != null) {
             knotLinkSubscriber.stop();
             knotLinkSubscriber = null;
+            backupLogger.info("SYSTEM", "KnotLink 订阅器已关闭");
         }
-        getLogger().info("[MineBackup] 插件已禁用。");
+
+        // 关闭日志
+        if (backupLogger != null) {
+            backupLogger.info("SYSTEM", "=== MineBackup 插件已禁用 ===");
+            backupLogger.close();
+        }
     }
 
     // ==================== 广播事件处理 ====================
 
     /**
      * 处理从 MineBackup 主程序接收到的广播事件
+     * <p>
      * 注意：此方法在 KnotLink 读取线程上调用，Bukkit API 操作需调度到主线程
      */
     private void handleBroadcastEvent(String payload) {
         if (!isEnabled()) return;
 
-        // 处理远程保存命令
+        backupLogger.debug("EVENT", "收到原始广播: " + payload);
+
+        // 处理远程保存命令（特殊格式，非键值对）
         if ("minebackup save".equals(payload)) {
-            Bukkit.getScheduler().runTask(this, () -> {
-                getLogger().info("[MineBackup] 收到远程保存命令，正在执行...");
-                languageManager.broadcastMessage("minebackup.remote_save.start");
-                boolean success = true;
-                for (World world : Bukkit.getWorlds()) {
-                    try {
-                        world.save();
-                    } catch (Exception e) {
-                        getLogger().warning("[MineBackup] 保存世界 " + world.getName() + " 失败: " + e.getMessage());
-                        success = false;
-                    }
-                }
-                languageManager.broadcastMessage(success ? "minebackup.remote_save.success" : "minebackup.remote_save.fail");
-            });
+            handleRemoteSave();
             return;
         }
 
-        getLogger().info("[MineBackup] 收到广播事件: " + payload);
         Map<String, String> eventData = parsePayload(payload);
         String eventType = eventData.get("event");
-        if (eventType == null) return;
+        if (eventType == null) {
+            backupLogger.debug("EVENT", "忽略无 event 字段的广播: " + payload);
+            return;
+        }
+
+        backupLogger.info("EVENT", "收到事件: " + eventType + " | 数据: " + eventData);
 
         switch (eventType) {
             case "handshake" -> handleHandshake(eventData);
@@ -127,12 +162,43 @@ public final class MineBackupPlugin extends JavaPlugin {
             case "restore_finished", "restore_success" -> handleRestoreFinished(eventData, eventType);
             case "game_session_start" -> {
                 String world = eventData.get("world");
-                getLogger().info("[MineBackup] 检测到游戏会话开始，世界: " + world);
+                backupLogger.info("SESSION", "游戏会话开始，世界: " + world);
             }
             default -> {
                 Bukkit.getScheduler().runTask(this, () -> broadcastEvent(eventType, eventData));
             }
         }
+    }
+
+    /**
+     * 处理远程保存命令
+     */
+    private void handleRemoteSave() {
+        Bukkit.getScheduler().runTask(this, () -> {
+            backupLogger.info("SAVE", "收到远程保存命令，正在执行...");
+            languageManager.broadcastMessage("minebackup.remote_save.start");
+
+            long saveStart = System.currentTimeMillis();
+            boolean success = true;
+            int worldCount = 0;
+
+            for (World world : Bukkit.getWorlds()) {
+                try {
+                    world.save();
+                    worldCount++;
+                } catch (Exception e) {
+                    backupLogger.error("SAVE", "保存世界 '" + world.getName() + "' 失败: " + e.getMessage());
+                    success = false;
+                }
+            }
+
+            long saveCost = System.currentTimeMillis() - saveStart;
+            backupLogger.info("SAVE", "远程保存完成: " + worldCount + " 个世界，耗时 " + saveCost + "ms"
+                    + (success ? "" : " (部分失败)"));
+            languageManager.broadcastMessage(success
+                    ? "minebackup.remote_save.success"
+                    : "minebackup.remote_save.fail");
+        });
     }
 
     /**
@@ -142,7 +208,7 @@ public final class MineBackupPlugin extends JavaPlugin {
         String mainVersion = eventData.get("version");
         String minModVersion = eventData.get("min_mod_version");
 
-        getLogger().info("[MineBackup] 收到握手请求: 主程序v" + mainVersion
+        backupLogger.info("HANDSHAKE", "收到握手: 主程序 v" + mainVersion
                 + ", min_mod_version=" + minModVersion);
 
         // 存储握手信息
@@ -157,15 +223,16 @@ public final class MineBackupPlugin extends JavaPlugin {
         // 回复握手响应
         OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID,
                 "HANDSHAKE_RESPONSE " + PLUGIN_VERSION);
-        getLogger().info("[MineBackup] 已发送 HANDSHAKE_RESPONSE，插件版本: " + PLUGIN_VERSION);
+        backupLogger.info("HANDSHAKE", "已发送 HANDSHAKE_RESPONSE，插件版本: " + PLUGIN_VERSION
+                + "，兼容性: " + (compatible ? "通过" : "不通过"));
 
         // 广播版本兼容性信息
         Bukkit.getScheduler().runTask(this, () -> {
             if (!compatible) {
                 languageManager.broadcastMessage("minebackup.handshake.version_incompatible",
                         PLUGIN_VERSION, minModVersion != null ? minModVersion : "?");
-                getLogger().warning("[MineBackup] 插件版本 " + PLUGIN_VERSION
-                        + " 不满足最低要求 " + minModVersion);
+                backupLogger.warn("HANDSHAKE", "版本不兼容: 插件 v" + PLUGIN_VERSION
+                        + " < 要求 v" + minModVersion);
             } else {
                 languageManager.broadcastMessage("minebackup.handshake.success",
                         mainVersion != null ? mainVersion : "?");
@@ -175,121 +242,150 @@ public final class MineBackupPlugin extends JavaPlugin {
 
     /**
      * 处理热备份事件
+     * <p>
      * 在热备份前保存所有世界数据，然后通知主程序
      */
     private void handlePreHotBackup(Map<String, String> eventData) {
         Bukkit.getScheduler().runTask(this, () -> {
-            getLogger().info("[MineBackup] 收到热备份请求，执行即时保存");
-
-            // 获取主世界名称作为显示
             String worldName = Bukkit.getWorlds().isEmpty() ? "unknown"
                     : Bukkit.getWorlds().get(0).getName();
 
+            backupLogger.info("BACKUP", "收到热备份请求，正在保存所有世界数据...");
             languageManager.broadcastMessage("minebackup.broadcast.hot_backup_request", worldName);
 
-            // 保存所有世界
+            long saveStart = System.currentTimeMillis();
             boolean allSaved = true;
+
             for (World world : Bukkit.getWorlds()) {
                 try {
                     world.save();
+                    backupLogger.debug("BACKUP", "世界 '" + world.getName() + "' 保存完成");
                 } catch (Exception e) {
-                    getLogger().warning("[MineBackup] 保存世界 " + world.getName() + " 失败: " + e.getMessage());
+                    backupLogger.error("BACKUP", "保存世界 '" + world.getName() + "' 失败: " + e.getMessage());
                     allSaved = false;
                 }
             }
 
+            long saveCost = System.currentTimeMillis() - saveStart;
+            backupLogger.info("BACKUP", "世界数据保存完成，耗时 " + saveCost + "ms"
+                    + (allSaved ? "" : " (部分失败)"));
+
             if (!allSaved) {
-                getLogger().warning("[MineBackup] 部分数据保存失败，世界: " + worldName);
                 languageManager.broadcastMessage("minebackup.broadcast.hot_backup_warn", worldName);
             }
 
-            getLogger().info("[MineBackup] 世界数据保存完成");
             languageManager.broadcastMessage("minebackup.broadcast.hot_backup_complete");
 
             // 通知主程序世界保存已完成
             OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID, "WORLD_SAVED");
-            getLogger().info("[MineBackup] 已发送 WORLD_SAVED 通知");
+            backupLogger.info("BACKUP", "已发送 WORLD_SAVED 通知");
         });
     }
 
     /**
      * 处理热还原事件
-     * Spigot 服务器版本：踢出所有玩家 → 保存世界 → 通知主程序 → 关闭服务器
-     * 服务器需要外部机制（如脚本/面板）来自动重启
+     * <p>
+     * 根据当前是否已有 RestoreTask 来决定处理方式：
+     * <ul>
+     *   <li>有活动的命令发起任务（EXECUTING 阶段）→ 直接执行关服流程</li>
+     *   <li>有活动的任务在其他阶段 → 取消后转为远程还原流程</li>
+     *   <li>无活动任务 → 创建新的远程还原任务（含倒计时）</li>
+     * </ul>
      */
     private void handlePreHotRestore(Map<String, String> eventData) {
-        getLogger().info("[MineBackup] 收到热还原准备请求");
+        backupLogger.info("RESTORE", "收到 pre_hot_restore 事件: " + eventData);
 
         Bukkit.getScheduler().runTask(this, () -> {
-            languageManager.broadcastMessage("minebackup.restore.preparing");
+            RestoreTask task = RestoreTask.getCurrentTask();
 
-            // 标记还原状态
-            HotRestoreState.isRestoring = true;
-            HotRestoreState.waitingForServerStopAck = true;
+            if (task != null && task.getPhase() == RestoreTask.Phase.EXECUTING && !task.isRemote()) {
+                // 命令发起的还原已通过倒计时并发送了 RESTORE 命令，现在收到主程序的确认
+                backupLogger.info("RESTORE", "命令发起的还原收到 pre_hot_restore 确认，执行关服流程");
+                task.performShutdown();
 
-            getLogger().info("[MineBackup] 检测到专用服务器，踢出所有玩家并停止服务器");
+            } else if (task != null && task.getPhase() != RestoreTask.Phase.NONE) {
+                // 有其他阶段的任务，取消后转为远程还原
+                backupLogger.warn("RESTORE", "收到远程 pre_hot_restore，取消正在进行的本地任务 (阶段: "
+                        + task.getPhase().getDisplayName() + ")");
+                task.abort("remote_override");
+                startRemoteRestoreTask();
 
-            // 1. 保存所有世界数据
-            getLogger().info("[MineBackup] 保存世界数据...");
-            for (World world : Bukkit.getWorlds()) {
-                try {
-                    world.save();
-                } catch (Exception e) {
-                    getLogger().warning("[MineBackup] 保存世界 " + world.getName() + " 时出现异常: " + e.getMessage());
-                }
+            } else {
+                // 无活动任务 — 纯远程发起的还原
+                startRemoteRestoreTask();
             }
-
-            // 2. 踢出所有玩家
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                try {
-                    player.kickPlayer(languageManager.getTranslation(player, "minebackup.restore.kick"));
-                } catch (Exception e) {
-                    getLogger().warning("[MineBackup] 踢出玩家 " + player.getName() + " 时出现异常: " + e.getMessage());
-                }
-            }
-
-            // 3. 在异步线程中延迟通知 MineBackup 主程序
-            new Thread(() -> {
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-                OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID, "WORLD_SAVE_AND_EXIT_COMPLETE");
-                getLogger().info("[MineBackup] 已发送 WORLD_SAVE_AND_EXIT_COMPLETE (专用服务器)");
-            }, "minebackup-restore-signal").start();
-
-            // 4. 关闭服务器（MineBackup 主程序将替换世界文件，服务器需通过外部脚本重启）
-            getLogger().info("[MineBackup] 正在关闭服务器...");
-            Bukkit.shutdown();
         });
     }
 
     /**
+     * 创建并启动远程还原任务
+     */
+    private void startRemoteRestoreTask() {
+        RestoreTask remoteTask = new RestoreTask(this);
+        if (!remoteTask.start()) {
+            // 兜底：直接执行关服（不应到达此分支）
+            backupLogger.error("RESTORE", "无法启动远程还原任务，执行直接关服");
+            directShutdownForRestore();
+        }
+    }
+
+    /**
+     * 兜底的直接关服流程（通常不会进入）
+     */
+    private void directShutdownForRestore() {
+        HotRestoreState.isRestoring = true;
+        HotRestoreState.waitingForServerStopAck = true;
+
+        languageManager.broadcastMessage("minebackup.restore.executing");
+
+        for (World world : Bukkit.getWorlds()) {
+            try { world.save(); } catch (Exception ignored) {}
+        }
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            try {
+                player.kickPlayer(languageManager.getTranslation(player, "minebackup.restore.kick"));
+            } catch (Exception ignored) {}
+        }
+
+        new Thread(() -> {
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID, "WORLD_SAVE_AND_EXIT_COMPLETE");
+        }, "minebackup-restore-signal").start();
+
+        ServerRestartManager.prepareRestart(this);
+        Bukkit.shutdown();
+    }
+
+    /**
      * 处理还原完成事件
-     * 在 Spigot 环境下，服务器一般已在热还原前关闭；
-     * 如果服务器仍在运行（例如非热还原场景），则广播成功消息
      */
     private void handleRestoreFinished(Map<String, String> eventData, String eventType) {
         String status = "restore_success".equals(eventType)
                 ? "success" : eventData.getOrDefault("status", "success");
+
+        backupLogger.info("RESTORE", "还原完成事件: type=" + eventType + ", status=" + status);
 
         if ("success".equals(status)) {
             Bukkit.getScheduler().runTask(this, () -> {
                 languageManager.broadcastMessage("minebackup.restore.success");
                 HotRestoreState.reset();
             });
-            getLogger().info("[MineBackup] 还原成功");
         } else {
-            getLogger().warning("[MineBackup] 主程序报告还原失败，status=" + status);
+            backupLogger.warn("RESTORE", "主程序报告还原失败, status=" + status);
             HotRestoreState.reset();
         }
     }
 
     /**
-     * 根据事件类型广播消息
+     * 根据事件类型广播消息给所有在线玩家和控制台
      */
     private void broadcastEvent(String eventType, Map<String, String> eventData) {
+        // 记录事件日志
+        String category = eventType.toUpperCase().replace("_", " ");
+        backupLogger.info("EVENT", "广播事件 '" + eventType + "' 给所有玩家");
+
         for (Player player : Bukkit.getOnlinePlayers()) {
             String message = buildMessageForSender(player, eventType, eventData);
             if (message != null) {
@@ -302,25 +398,43 @@ public final class MineBackupPlugin extends JavaPlugin {
         }
     }
 
-    private String buildMessageForSender(org.bukkit.command.CommandSender sender, String eventType, Map<String, String> eventData) {
+    private String buildMessageForSender(org.bukkit.command.CommandSender sender,
+                                         String eventType, Map<String, String> eventData) {
         return switch (eventType) {
             case "backup_started" ->
-                    languageManager.getTranslation(sender, "minebackup.broadcast.backup_started", Messages.getWorldDisplay(sender, eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.backup_started",
+                            Messages.getWorldDisplay(sender, eventData));
             case "restore_started" ->
-                    languageManager.getTranslation(sender, "minebackup.broadcast.restore_started", Messages.getWorldDisplay(sender, eventData));
-            case "backup_success" ->
-                    languageManager.getTranslation(sender, "minebackup.broadcast.backup_success",
-                            Messages.getWorldDisplay(sender, eventData), Messages.getFileDisplay(sender, eventData));
-            case "backup_failed" ->
-                    languageManager.getTranslation(sender, "minebackup.broadcast.backup_failed",
-                            Messages.getWorldDisplay(sender, eventData), Messages.getErrorDisplay(sender, eventData));
-            case "game_session_end" ->
-                    languageManager.getTranslation(sender, "minebackup.broadcast.session_end", Messages.getWorldDisplay(sender, eventData));
-            case "auto_backup_started" ->
-                    languageManager.getTranslation(sender, "minebackup.broadcast.auto_backup_started", Messages.getWorldDisplay(sender, eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.restore_started",
+                            Messages.getWorldDisplay(sender, eventData));
+            case "backup_success" -> {
+                backupLogger.info("BACKUP", "备份成功: 世界='" + eventData.get("world")
+                        + "', 文件='" + eventData.get("file") + "'");
+                yield languageManager.getTranslation(sender, "minebackup.broadcast.backup_success",
+                        Messages.getWorldDisplay(sender, eventData),
+                        Messages.getFileDisplay(sender, eventData));
+            }
+            case "backup_failed" -> {
+                backupLogger.error("BACKUP", "备份失败: 世界='" + eventData.get("world")
+                        + "', 错误='" + eventData.get("error") + "'");
+                yield languageManager.getTranslation(sender, "minebackup.broadcast.backup_failed",
+                        Messages.getWorldDisplay(sender, eventData),
+                        Messages.getErrorDisplay(sender, eventData));
+            }
+            case "game_session_end" -> {
+                backupLogger.info("SESSION", "游戏会话结束: 世界='" + eventData.get("world") + "'");
+                yield languageManager.getTranslation(sender, "minebackup.broadcast.session_end",
+                        Messages.getWorldDisplay(sender, eventData));
+            }
+            case "auto_backup_started" -> {
+                backupLogger.info("AUTO_BACKUP", "自动备份任务已启动: 世界='" + eventData.get("world") + "'");
+                yield languageManager.getTranslation(sender, "minebackup.broadcast.auto_backup_started",
+                        Messages.getWorldDisplay(sender, eventData));
+            }
             case "we_snapshot_completed" ->
                     languageManager.getTranslation(sender, "minebackup.broadcast.we_snapshot",
-                            Messages.getWorldDisplay(sender, eventData), Messages.getFileDisplay(sender, eventData));
+                            Messages.getWorldDisplay(sender, eventData),
+                            Messages.getFileDisplay(sender, eventData));
             default -> null;
         };
     }
@@ -329,6 +443,7 @@ public final class MineBackupPlugin extends JavaPlugin {
 
     /**
      * 解析事件负载数据
+     *
      * @param payload 格式为 "key1=value1;key2=value2" 的字符串
      */
     private Map<String, String> parsePayload(String payload) {
@@ -345,6 +460,7 @@ public final class MineBackupPlugin extends JavaPlugin {
 
     /**
      * 版本号比较工具：检查当前版本是否满足最低要求
+     * <p>
      * 格式为 major.minor.patch（如 "1.0.0"）
      */
     public static boolean isVersionCompatible(String current, String required) {
@@ -359,8 +475,6 @@ public final class MineBackupPlugin extends JavaPlugin {
             }
             return true;
         } catch (Exception e) {
-            getPlugin(MineBackupPlugin.class).getLogger().warning(
-                    "版本号解析失败: current=" + current + ", required=" + required);
             return false;
         }
     }
