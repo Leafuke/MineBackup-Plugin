@@ -27,14 +27,20 @@ public final class MineBackupPlugin extends JavaPlugin {
 
     private SignalSubscriber knotLinkSubscriber;
     private static MineBackupPlugin instance;
+    private LanguageManager languageManager;
 
     public static MineBackupPlugin getInstance() {
         return instance;
     }
 
+    public LanguageManager getLanguageManager() {
+        return languageManager;
+    }
+
     @Override
     public void onEnable() {
         instance = this;
+        languageManager = new LanguageManager(this);
         getLogger().info("[MineBackup] 正在初始化 Spigot 1.21 插件版本...");
 
         // 初始化 KnotLink 订阅器
@@ -64,7 +70,7 @@ public final class MineBackupPlugin extends JavaPlugin {
         var legacyCmd = getCommand("minebackup");
         if (legacyCmd != null) {
             legacyCmd.setExecutor((sender, command, label, args) -> {
-                sender.sendMessage(Messages.COMMAND_MIGRATED);
+                languageManager.sendMessage(sender, "minebackup.command.migrated");
                 return true;
             });
         }
@@ -94,7 +100,7 @@ public final class MineBackupPlugin extends JavaPlugin {
         if ("minebackup save".equals(payload)) {
             Bukkit.getScheduler().runTask(this, () -> {
                 getLogger().info("[MineBackup] 收到远程保存命令，正在执行...");
-                Bukkit.broadcastMessage(Messages.REMOTE_SAVE_START);
+                languageManager.broadcastMessage("minebackup.remote_save.start");
                 boolean success = true;
                 for (World world : Bukkit.getWorlds()) {
                     try {
@@ -104,7 +110,7 @@ public final class MineBackupPlugin extends JavaPlugin {
                         success = false;
                     }
                 }
-                Bukkit.broadcastMessage(success ? Messages.REMOTE_SAVE_SUCCESS : Messages.REMOTE_SAVE_FAIL);
+                languageManager.broadcastMessage(success ? "minebackup.remote_save.success" : "minebackup.remote_save.fail");
             });
             return;
         }
@@ -120,15 +126,11 @@ public final class MineBackupPlugin extends JavaPlugin {
             case "pre_hot_restore" -> handlePreHotRestore(eventData);
             case "restore_finished", "restore_success" -> handleRestoreFinished(eventData, eventType);
             case "game_session_start" -> {
-                String world = Messages.getWorldDisplay(eventData);
+                String world = eventData.get("world");
                 getLogger().info("[MineBackup] 检测到游戏会话开始，世界: " + world);
             }
             default -> {
-                // 构建并广播消息
-                String message = buildBroadcastMessage(eventType, eventData);
-                if (message != null) {
-                    Bukkit.getScheduler().runTask(this, () -> Bukkit.broadcastMessage(message));
-                }
+                Bukkit.getScheduler().runTask(this, () -> broadcastEvent(eventType, eventData));
             }
         }
     }
@@ -160,15 +162,13 @@ public final class MineBackupPlugin extends JavaPlugin {
         // 广播版本兼容性信息
         Bukkit.getScheduler().runTask(this, () -> {
             if (!compatible) {
-                String msg = Messages.format(Messages.HANDSHAKE_VERSION_INCOMPATIBLE,
+                languageManager.broadcastMessage("minebackup.handshake.version_incompatible",
                         PLUGIN_VERSION, minModVersion != null ? minModVersion : "?");
-                Bukkit.broadcastMessage(msg);
                 getLogger().warning("[MineBackup] 插件版本 " + PLUGIN_VERSION
                         + " 不满足最低要求 " + minModVersion);
             } else {
-                String msg = Messages.format(Messages.HANDSHAKE_SUCCESS,
+                languageManager.broadcastMessage("minebackup.handshake.success",
                         mainVersion != null ? mainVersion : "?");
-                Bukkit.broadcastMessage(msg);
             }
         });
     }
@@ -185,7 +185,7 @@ public final class MineBackupPlugin extends JavaPlugin {
             String worldName = Bukkit.getWorlds().isEmpty() ? "unknown"
                     : Bukkit.getWorlds().get(0).getName();
 
-            Bukkit.broadcastMessage(Messages.format(Messages.BROADCAST_HOT_BACKUP_REQUEST, worldName));
+            languageManager.broadcastMessage("minebackup.broadcast.hot_backup_request", worldName);
 
             // 保存所有世界
             boolean allSaved = true;
@@ -200,11 +200,11 @@ public final class MineBackupPlugin extends JavaPlugin {
 
             if (!allSaved) {
                 getLogger().warning("[MineBackup] 部分数据保存失败，世界: " + worldName);
-                Bukkit.broadcastMessage(Messages.format(Messages.BROADCAST_HOT_BACKUP_WARN, worldName));
+                languageManager.broadcastMessage("minebackup.broadcast.hot_backup_warn", worldName);
             }
 
             getLogger().info("[MineBackup] 世界数据保存完成");
-            Bukkit.broadcastMessage(Messages.BROADCAST_HOT_BACKUP_COMPLETE);
+            languageManager.broadcastMessage("minebackup.broadcast.hot_backup_complete");
 
             // 通知主程序世界保存已完成
             OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID, "WORLD_SAVED");
@@ -221,7 +221,7 @@ public final class MineBackupPlugin extends JavaPlugin {
         getLogger().info("[MineBackup] 收到热还原准备请求");
 
         Bukkit.getScheduler().runTask(this, () -> {
-            Bukkit.broadcastMessage(Messages.RESTORE_PREPARING);
+            languageManager.broadcastMessage("minebackup.restore.preparing");
 
             // 标记还原状态
             HotRestoreState.isRestoring = true;
@@ -242,7 +242,7 @@ public final class MineBackupPlugin extends JavaPlugin {
             // 2. 踢出所有玩家
             for (Player player : Bukkit.getOnlinePlayers()) {
                 try {
-                    player.kickPlayer(Messages.RESTORE_KICK);
+                    player.kickPlayer(languageManager.getTranslation(player, "minebackup.restore.kick"));
                 } catch (Exception e) {
                     getLogger().warning("[MineBackup] 踢出玩家 " + player.getName() + " 时出现异常: " + e.getMessage());
                 }
@@ -276,7 +276,7 @@ public final class MineBackupPlugin extends JavaPlugin {
 
         if ("success".equals(status)) {
             Bukkit.getScheduler().runTask(this, () -> {
-                Bukkit.broadcastMessage(Messages.RESTORE_SUCCESS);
+                languageManager.broadcastMessage("minebackup.restore.success");
                 HotRestoreState.reset();
             });
             getLogger().info("[MineBackup] 还原成功");
@@ -287,27 +287,40 @@ public final class MineBackupPlugin extends JavaPlugin {
     }
 
     /**
-     * 根据事件类型构建要广播的消息
+     * 根据事件类型广播消息
      */
-    private String buildBroadcastMessage(String eventType, Map<String, String> eventData) {
+    private void broadcastEvent(String eventType, Map<String, String> eventData) {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            String message = buildMessageForSender(player, eventType, eventData);
+            if (message != null) {
+                player.sendMessage(message);
+            }
+        }
+        String consoleMessage = buildMessageForSender(Bukkit.getConsoleSender(), eventType, eventData);
+        if (consoleMessage != null) {
+            Bukkit.getConsoleSender().sendMessage(consoleMessage);
+        }
+    }
+
+    private String buildMessageForSender(org.bukkit.command.CommandSender sender, String eventType, Map<String, String> eventData) {
         return switch (eventType) {
             case "backup_started" ->
-                    Messages.format(Messages.BROADCAST_BACKUP_STARTED, Messages.getWorldDisplay(eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.backup_started", Messages.getWorldDisplay(sender, eventData));
             case "restore_started" ->
-                    Messages.format(Messages.BROADCAST_RESTORE_STARTED, Messages.getWorldDisplay(eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.restore_started", Messages.getWorldDisplay(sender, eventData));
             case "backup_success" ->
-                    Messages.format(Messages.BROADCAST_BACKUP_SUCCESS,
-                            Messages.getWorldDisplay(eventData), Messages.getFileDisplay(eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.backup_success",
+                            Messages.getWorldDisplay(sender, eventData), Messages.getFileDisplay(sender, eventData));
             case "backup_failed" ->
-                    Messages.format(Messages.BROADCAST_BACKUP_FAILED,
-                            Messages.getWorldDisplay(eventData), Messages.getErrorDisplay(eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.backup_failed",
+                            Messages.getWorldDisplay(sender, eventData), Messages.getErrorDisplay(sender, eventData));
             case "game_session_end" ->
-                    Messages.format(Messages.BROADCAST_SESSION_END, Messages.getWorldDisplay(eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.session_end", Messages.getWorldDisplay(sender, eventData));
             case "auto_backup_started" ->
-                    Messages.format(Messages.BROADCAST_AUTO_BACKUP_STARTED, Messages.getWorldDisplay(eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.auto_backup_started", Messages.getWorldDisplay(sender, eventData));
             case "we_snapshot_completed" ->
-                    Messages.format(Messages.BROADCAST_WE_SNAPSHOT,
-                            Messages.getWorldDisplay(eventData), Messages.getFileDisplay(eventData));
+                    languageManager.getTranslation(sender, "minebackup.broadcast.we_snapshot",
+                            Messages.getWorldDisplay(sender, eventData), Messages.getFileDisplay(sender, eventData));
             default -> null;
         };
     }

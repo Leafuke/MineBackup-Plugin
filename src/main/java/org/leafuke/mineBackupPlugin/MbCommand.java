@@ -49,7 +49,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage(Messages.USAGE);
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage");
             return true;
         }
 
@@ -66,7 +66,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             case "auto" -> handleAuto(sender, args);
             case "stop" -> handleStop(sender, args);
             case "snap" -> handleSnap(sender, args);
-            default -> sender.sendMessage(Messages.USAGE);
+            default -> plugin.getLanguageManager().sendMessage(sender, "minebackup.usage");
         }
         return true;
     }
@@ -84,7 +84,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      * /mb list_configs - 查询配置列表
      */
     private void handleListConfigs(CommandSender sender) {
-        sender.sendMessage(Messages.LIST_CONFIGS_START);
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.list_configs.start");
         queryBackend("LIST_CONFIGS", response ->
                 handleListConfigsResponse(sender, response));
     }
@@ -94,17 +94,17 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleListWorlds(CommandSender sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage("§c用法: /mb list_worlds <配置ID>");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage.list_worlds");
             return;
         }
         int configId;
         try {
             configId = Integer.parseInt(args[1]);
         } catch (NumberFormatException e) {
-            sender.sendMessage("§c配置ID必须是整数。");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
-        sender.sendMessage(Messages.format(Messages.LIST_WORLDS_START, String.valueOf(configId)));
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.list_worlds.start", String.valueOf(configId));
         queryBackend(String.format("LIST_WORLDS %d", configId), response ->
                 handleListWorldsResponse(sender, response, configId));
     }
@@ -114,7 +114,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleListBackups(CommandSender sender, String[] args) {
         if (args.length < 3) {
-            sender.sendMessage("§c用法: /mb list_backups <配置ID> <世界索引>");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage.list_backups");
             return;
         }
         int configId, worldIndex;
@@ -122,11 +122,11 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             configId = Integer.parseInt(args[1]);
             worldIndex = Integer.parseInt(args[2]);
         } catch (NumberFormatException e) {
-            sender.sendMessage("§c参数必须是整数。");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
-        sender.sendMessage(Messages.format(Messages.LIST_BACKUPS_START,
-                String.valueOf(configId), String.valueOf(worldIndex)));
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.list_backups.start",
+                String.valueOf(configId), String.valueOf(worldIndex));
         queryBackend(String.format("LIST_BACKUPS %d %d", configId, worldIndex), response ->
                 handleListBackupsResponse(sender, response, configId, worldIndex));
     }
@@ -136,7 +136,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleBackup(CommandSender sender, String[] args) {
         if (args.length < 3) {
-            sender.sendMessage("§c用法: /mb backup <配置ID> <世界索引> [备注]");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage.backup");
             return;
         }
         int configId, worldIndex;
@@ -144,7 +144,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             configId = Integer.parseInt(args[1]);
             worldIndex = Integer.parseInt(args[2]);
         } catch (NumberFormatException e) {
-            sender.sendMessage("§c参数必须是整数。");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
         String cmd;
@@ -162,7 +162,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleRestore(CommandSender sender, String[] args) {
         if (args.length < 4) {
-            sender.sendMessage("§c用法: /mb restore <配置ID> <世界索引> <备份文件>");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage.restore");
             return;
         }
         int configId, worldIndex;
@@ -170,7 +170,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             configId = Integer.parseInt(args[1]);
             worldIndex = Integer.parseInt(args[2]);
         } catch (NumberFormatException e) {
-            sender.sendMessage("§c参数必须是整数。");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
         String backupFile = args[3];
@@ -208,7 +208,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleAuto(CommandSender sender, String[] args) {
         if (args.length < 4) {
-            sender.sendMessage("§c用法: /mb auto <配置ID> <世界索引> <间隔秒数>");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage.auto");
             return;
         }
         int configId, worldIndex, internalTime;
@@ -217,7 +217,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             worldIndex = Integer.parseInt(args[2]);
             internalTime = Integer.parseInt(args[3]);
         } catch (NumberFormatException e) {
-            sender.sendMessage("§c参数必须是整数。");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
         Config.setAutoBackup(plugin, configId, worldIndex, internalTime);
@@ -230,7 +230,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleStop(CommandSender sender, String[] args) {
         if (args.length < 3) {
-            sender.sendMessage("§c用法: /mb stop <配置ID> <世界索引>");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage.stop");
             return;
         }
         int configId, worldIndex;
@@ -238,7 +238,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             configId = Integer.parseInt(args[1]);
             worldIndex = Integer.parseInt(args[2]);
         } catch (NumberFormatException e) {
-            sender.sendMessage("§c参数必须是整数。");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
         Config.clearAutoBackup(plugin);
@@ -251,7 +251,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void handleSnap(CommandSender sender, String[] args) {
         if (args.length < 4) {
-            sender.sendMessage("§c用法: /mb snap <配置ID> <世界索引> <备份文件>");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.usage.snap");
             return;
         }
         int configId, worldIndex;
@@ -259,12 +259,12 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             configId = Integer.parseInt(args[1]);
             worldIndex = Integer.parseInt(args[2]);
         } catch (NumberFormatException e) {
-            sender.sendMessage("§c参数必须是整数。");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
         String backupFile = args[3];
         String cmd = String.format("ADD_TO_WE %d %d %s", configId, worldIndex, backupFile);
-        sender.sendMessage(Messages.format(Messages.SNAP_SENT, cmd));
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.snap.sent", cmd);
         queryBackend(cmd, response -> handleGenericResponse(sender, response, "snap"));
     }
 
@@ -323,7 +323,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      * 保存所有世界
      */
     private void saveAllWorlds(CommandSender sender) {
-        sender.sendMessage(Messages.SAVE_START);
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.save.start");
         for (World world : Bukkit.getWorlds()) {
             try {
                 world.save();
@@ -331,7 +331,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
                 plugin.getLogger().warning("[MineBackup] 保存世界 " + world.getName() + " 失败: " + e.getMessage());
             }
         }
-        sender.sendMessage(Messages.SAVE_SUCCESS);
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.save.success");
     }
 
     /**
@@ -360,10 +360,10 @@ public class MbCommand implements CommandExecutor, TabCompleter {
      */
     private void executeRemoteCommand(CommandSender sender, String command) {
         if (command == null || command.trim().isEmpty()) {
-            sender.sendMessage(Messages.COMMAND_INVALID);
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.command.invalid");
             return;
         }
-        sender.sendMessage(Messages.format(Messages.COMMAND_SENT, command));
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.command.sent", command);
         String commandType = command.split(" ")[0].toLowerCase();
         queryBackend(command, response -> handleGenericResponse(sender, response, commandType));
     }
@@ -374,10 +374,10 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private void handleGenericResponse(CommandSender sender, String response, String commandType) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response != null && response.startsWith("ERROR:")) {
-                sender.sendMessage(Messages.format(Messages.COMMAND_FAIL, Messages.localizeError(response)));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.command.fail", Messages.localizeError(sender, response));
             } else {
-                sender.sendMessage(Messages.format(Messages.GENERIC_RESPONSE,
-                        response != null ? response : Messages.NO_RESPONSE));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.generic.response",
+                        response != null ? response : plugin.getLanguageManager().getTranslation(sender, "minebackup.no_response"));
             }
         });
     }
@@ -388,18 +388,18 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private void handleListConfigsResponse(CommandSender sender, String response) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
-                sender.sendMessage(Messages.format(Messages.LIST_CONFIGS_FAIL, Messages.localizeError(response)));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_configs.fail", Messages.localizeError(sender, response));
                 return;
             }
-            StringBuilder result = new StringBuilder(Messages.LIST_CONFIGS_TITLE);
+            StringBuilder result = new StringBuilder(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_configs.title"));
             String data = response.substring(3);
             if (data.isEmpty()) {
-                result.append(Messages.LIST_CONFIGS_EMPTY);
+                result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_configs.empty"));
             } else {
                 for (String config : data.split(";")) {
                     String[] parts = config.split(",", 2);
                     if (parts.length == 2) {
-                        result.append(Messages.format(Messages.LIST_CONFIGS_ENTRY, parts[0], parts[1]));
+                        result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_configs.entry", parts[0], parts[1]));
                     }
                 }
             }
@@ -413,18 +413,18 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private void handleListWorldsResponse(CommandSender sender, String response, int configId) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
-                sender.sendMessage(Messages.format(Messages.LIST_WORLDS_FAIL, Messages.localizeError(response)));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_worlds.fail", Messages.localizeError(sender, response));
                 return;
             }
             StringBuilder result = new StringBuilder(
-                    Messages.format(Messages.LIST_WORLDS_TITLE, String.valueOf(configId)));
+                    plugin.getLanguageManager().getTranslation(sender, "minebackup.list_worlds.title", String.valueOf(configId)));
             String data = response.substring(3);
             if (data.isEmpty()) {
-                result.append(Messages.LIST_WORLDS_EMPTY);
+                result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_worlds.empty"));
             } else {
                 String[] worlds = data.split(";");
                 for (int i = 0; i < worlds.length; i++) {
-                    result.append(Messages.format(Messages.LIST_WORLDS_ENTRY,
+                    result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_worlds.entry",
                             String.valueOf(i), worlds[i]));
                 }
             }
@@ -439,18 +439,18 @@ public class MbCommand implements CommandExecutor, TabCompleter {
                                            int configId, int worldIndex) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
-                sender.sendMessage(Messages.format(Messages.LIST_BACKUPS_FAIL, Messages.localizeError(response)));
+                plugin.getLanguageManager().sendMessage(sender, "minebackup.list_backups.fail", Messages.localizeError(sender, response));
                 return;
             }
-            StringBuilder result = new StringBuilder(Messages.format(Messages.LIST_BACKUPS_TITLE,
+            StringBuilder result = new StringBuilder(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_backups.title",
                     String.valueOf(configId), String.valueOf(worldIndex)));
             String data = response.substring(3);
             if (data.isEmpty()) {
-                result.append(Messages.LIST_BACKUPS_EMPTY);
+                result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_backups.empty"));
             } else {
                 for (String file : data.split(";")) {
                     if (!file.isEmpty()) {
-                        result.append(Messages.format(Messages.LIST_BACKUPS_ENTRY, file));
+                        result.append(plugin.getLanguageManager().getTranslation(sender, "minebackup.list_backups.entry", file));
                     }
                 }
             }
