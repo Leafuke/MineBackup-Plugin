@@ -1,26 +1,21 @@
 package org.leafuke.mineBackupPlugin.knotlink;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
-/**
- * KnotLink 信号订阅器
- * 通过 TCP 长连接订阅 MineBackup 主程序的广播信号
- * 端口: 6372
- */
 public class SignalSubscriber {
     private static final Logger LOGGER = Logger.getLogger("MineBackup-SignalSubscriber");
+    private static final String HOST = "127.0.0.1";
+    private static final int PORT = 6372;
+    private static final long RECONNECT_DELAY_MS = 2000L;
 
-    private TcpClient knotLinkSubscriber;
     private final String appID;
     private final String signalID;
 
-    /**
-     * 信号监听器接口
-     */
-    public interface SignalListener {
-        void onSignalReceived(String data);
-    }
-
+    private volatile boolean running;
+    private volatile boolean connected;
+    private volatile TcpClient knotLinkSubscriber;
     private SignalListener signalListener;
 
     public SignalSubscriber(String appID, String signalID) {
@@ -32,34 +27,77 @@ public class SignalSubscriber {
         this.signalListener = listener;
     }
 
-    /**
-     * 启动订阅器，连接到 KnotLink 并开始接收信号
-     */
+    public boolean isConnected() {
+        return connected;
+    }
+
     public void start() {
-        knotLinkSubscriber = new TcpClient();
-        if (knotLinkSubscriber.connectToServer("127.0.0.1", 6372)) {
-            knotLinkSubscriber.setDataReceivedListener(data -> {
-                LOGGER.fine("收到 KnotLink 广播数据: " + data);
+        running = true;
+        while (running) {
+            CountDownLatch disconnectLatch = new CountDownLatch(1);
+            TcpClient client = new TcpClient();
+            knotLinkSubscriber = client;
+            client.setDisconnectListener(() -> {
+                connected = false;
+                disconnectLatch.countDown();
+            });
+            client.setDataReceivedListener(data -> {
                 if (signalListener != null) {
                     signalListener.onSignalReceived(data);
                 }
             });
 
-            String s_key = appID + "-" + signalID;
-            knotLinkSubscriber.sendData(s_key);
-            LOGGER.info("SignalSubscriber started and subscribed to " + s_key + ".");
-        } else {
-            LOGGER.severe("SignalSubscriber failed to start.");
+            if (!client.connectToServer(HOST, PORT)) {
+                sleepBeforeReconnect();
+                continue;
+            }
+
+            String subscriptionKey = appID + "-" + signalID;
+            client.sendData(subscriptionKey);
+            connected = true;
+            LOGGER.info("SignalSubscriber started and subscribed to " + subscriptionKey + ".");
+
+            while (running && client.isConnected()) {
+                try {
+                    if (disconnectLatch.await(1, TimeUnit.SECONDS)) {
+                        break;
+                    }
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    running = false;
+                }
+            }
+
+            connected = false;
+            client.close();
+            knotLinkSubscriber = null;
+            if (running) {
+                LOGGER.warning("KnotLink subscriber disconnected, retrying soon.");
+                sleepBeforeReconnect();
+            }
         }
     }
 
-    /**
-     * 停止订阅器
-     */
     public void stop() {
-        if (knotLinkSubscriber != null) {
-            knotLinkSubscriber.close();
-            LOGGER.info("SignalSubscriber stopped.");
+        running = false;
+        connected = false;
+        TcpClient currentClient = knotLinkSubscriber;
+        if (currentClient != null) {
+            currentClient.close();
         }
+        LOGGER.info("SignalSubscriber stopped.");
+    }
+
+    private void sleepBeforeReconnect() {
+        try {
+            Thread.sleep(RECONNECT_DELAY_MS);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+            running = false;
+        }
+    }
+
+    public interface SignalListener {
+        void onSignalReceived(String data);
     }
 }
