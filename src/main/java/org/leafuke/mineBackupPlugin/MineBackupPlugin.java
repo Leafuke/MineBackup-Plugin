@@ -26,9 +26,11 @@ public final class MineBackupPlugin extends JavaPlugin {
     private LanguageManager languageManager;
     private BackupLogger backupLogger;
     private BukkitTask relayPollTask;
+    private BukkitTask autoSaveFreezeWatchdogTask;
     private RestartRelayStore.Session relaySession;
     private volatile String lastHandshakeBroadcastVersion;
     private final Map<String, Boolean> worldAutoSaveStates = new ConcurrentHashMap<>();
+    private volatile long autoSaveFreezeTimestampMillis;
 
     public static MineBackupPlugin getInstance() {
         return instance;
@@ -65,6 +67,7 @@ public final class MineBackupPlugin extends JavaPlugin {
         HotRestoreState.reset();
         startRelayPollingIfNeeded();
         startKnotLinkSubscriber();
+        startAutoSaveFreezeWatchdog();
         restoreAutoBackupIfNeeded();
         registerCommands();
 
@@ -83,6 +86,10 @@ public final class MineBackupPlugin extends JavaPlugin {
             relayPollTask.cancel();
             relayPollTask = null;
         }
+        if (autoSaveFreezeWatchdogTask != null) {
+            autoSaveFreezeWatchdogTask.cancel();
+            autoSaveFreezeWatchdogTask = null;
+        }
 
         if (knotLinkSubscriber != null) {
             knotLinkSubscriber.stop();
@@ -98,6 +105,11 @@ public final class MineBackupPlugin extends JavaPlugin {
             backupLogger.info("SYSTEM", "=== MineBackup plugin disabled ===");
             backupLogger.close();
         }
+    }
+
+    private void startAutoSaveFreezeWatchdog() {
+        autoSaveFreezeWatchdogTask = Bukkit.getScheduler().runTaskTimer(this,
+                this::checkAutoSaveFreezeTimeout, 20L, 20L);
     }
 
     private void startKnotLinkSubscriber() {
@@ -244,25 +256,11 @@ public final class MineBackupPlugin extends JavaPlugin {
             backupLogger.info("SAVE", "Received remote save command.");
             languageManager.broadcastMessage("minebackup.remote_save.start");
 
-            long saveStart = System.currentTimeMillis();
-            boolean success = true;
-            int worldCount = 0;
-            for (World world : Bukkit.getWorlds()) {
-                try {
-                    world.save();
-                    worldCount++;
-                } catch (Exception e) {
-                    backupLogger.error("SAVE", "Failed to save world '" + world.getName() + "': " + e.getMessage());
-                    success = false;
-                }
-            }
-
-            long cost = System.currentTimeMillis() - saveStart;
-            backupLogger.info("SAVE", "Remote save completed for " + worldCount + " world(s) in " + cost
-                    + "ms" + (success ? "" : " (partial failure)"));
-            languageManager.broadcastMessage(success
-                    ? "minebackup.remote_save.success"
-                    : "minebackup.remote_save.fail");
+            LocalSaveCoordinator.SaveResult result =
+                    LocalSaveCoordinator.save(this, "SAVE", "Remote local save");
+            languageManager.broadcastMessage(result.isPartialFailure()
+                    ? "minebackup.remote_save.fail"
+                    : "minebackup.remote_save.success");
         });
     }
 
@@ -297,25 +295,14 @@ public final class MineBackupPlugin extends JavaPlugin {
 
     private void handlePreHotBackup(Map<String, String> eventData) {
         Bukkit.getScheduler().runTask(this, () -> {
-            String worldName = Bukkit.getWorlds().isEmpty() ? "unknown" : Bukkit.getWorlds().get(0).getName();
+            String worldName = eventData.getOrDefault("world",
+                    Bukkit.getWorlds().isEmpty() ? "unknown" : Bukkit.getWorlds().get(0).getName());
             backupLogger.info("BACKUP", "Received hot backup request.");
             languageManager.broadcastMessage("minebackup.broadcast.hot_backup_request", worldName);
 
-            boolean allSaved = true;
-            long saveStart = System.currentTimeMillis();
-            for (World world : Bukkit.getWorlds()) {
-                try {
-                    world.save();
-                } catch (Exception e) {
-                    backupLogger.error("BACKUP", "Failed to save world '" + world.getName() + "': " + e.getMessage());
-                    allSaved = false;
-                }
-            }
-
-            long cost = System.currentTimeMillis() - saveStart;
-            backupLogger.info("BACKUP", "Hot backup pre-save completed in " + cost + "ms"
-                    + (allSaved ? "" : " (partial failure)"));
-            if (!allSaved) {
+            LocalSaveCoordinator.SaveResult result =
+                    LocalSaveCoordinator.save(this, "BACKUP", "Hot backup pre-save");
+            if (result.isPartialFailure()) {
                 languageManager.broadcastMessage("minebackup.broadcast.hot_backup_warn", worldName);
             }
 
@@ -358,11 +345,10 @@ public final class MineBackupPlugin extends JavaPlugin {
         HotRestoreState.waitingForServerStopAck = true;
         languageManager.broadcastMessage("minebackup.restore.executing");
 
-        for (World world : Bukkit.getWorlds()) {
-            try {
-                world.save();
-            } catch (Exception ignored) {
-            }
+        LocalSaveCoordinator.SaveResult saveResult =
+                LocalSaveCoordinator.save(this, "RESTORE", "Fallback restore pre-save");
+        if (saveResult.isPartialFailure()) {
+            backupLogger.warn("RESTORE", "Fallback restore pre-save finished with partial failure.");
         }
 
         for (Player player : Bukkit.getOnlinePlayers()) {
@@ -424,6 +410,12 @@ public final class MineBackupPlugin extends JavaPlugin {
 
     private void freezeWorldAutoSave() {
         Runnable action = () -> {
+            if (!worldAutoSaveStates.isEmpty()) {
+                autoSaveFreezeTimestampMillis = System.currentTimeMillis();
+                backupLogger.warn("BACKUP", "Auto-save was already frozen. Refreshed freeze watchdog timestamp.");
+                return;
+            }
+
             for (World world : Bukkit.getWorlds()) {
                 String worldName = world.getName();
                 worldAutoSaveStates.putIfAbsent(worldName, world.isAutoSave());
@@ -432,6 +424,7 @@ public final class MineBackupPlugin extends JavaPlugin {
                     backupLogger.info("BACKUP", "Disabled auto-save for world '" + worldName + "' during hot backup.");
                 }
             }
+            autoSaveFreezeTimestampMillis = System.currentTimeMillis();
         };
         if (Bukkit.isPrimaryThread()) {
             action.run();
@@ -450,12 +443,29 @@ public final class MineBackupPlugin extends JavaPlugin {
                             + "' to " + previousState + ".");
                 }
             }
+            autoSaveFreezeTimestampMillis = 0L;
         };
         if (Bukkit.isPrimaryThread()) {
             action.run();
         } else if (isEnabled()) {
             Bukkit.getScheduler().runTask(this, action);
         }
+    }
+
+    private void checkAutoSaveFreezeTimeout() {
+        if (worldAutoSaveStates.isEmpty() || autoSaveFreezeTimestampMillis <= 0L) {
+            return;
+        }
+
+        long timeoutMillis = Math.max(1, Config.getBackupFreezeTimeoutSeconds()) * 1000L;
+        long elapsed = System.currentTimeMillis() - autoSaveFreezeTimestampMillis;
+        if (elapsed < timeoutMillis) {
+            return;
+        }
+
+        backupLogger.warn("BACKUP", "Auto-save freeze timed out after " + elapsed
+                + "ms. Restoring auto-save states now.");
+        restoreWorldAutoSave();
     }
 
     private void broadcastEvent(String eventType, Map<String, String> eventData) {

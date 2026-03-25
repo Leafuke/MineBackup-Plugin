@@ -32,6 +32,11 @@ public final class Config {
         return config.getInt("backup.freeze-timeout-seconds", 60);
     }
 
+    public static long getCoordinationDelayTicks() {
+        int seconds = config.getInt("backup.coordination-delay-seconds", 2);
+        return Math.max(0, seconds) * 20L;
+    }
+
     public static boolean isRequireConfirm() {
         return config.getBoolean("restore.require-confirm", true);
     }

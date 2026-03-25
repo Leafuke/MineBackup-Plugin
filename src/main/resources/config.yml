@@ -6,6 +6,9 @@
 general:
   debug: false
 
+backup:
+  freeze-timeout-seconds: 60
+
 restore:
   require-confirm: true
   confirm-timeout-seconds: 60

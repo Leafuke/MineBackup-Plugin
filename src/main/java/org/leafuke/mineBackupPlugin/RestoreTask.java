@@ -1,7 +1,6 @@
 package org.leafuke.mineBackupPlugin;
 
 import org.bukkit.Bukkit;
-import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
@@ -165,19 +164,11 @@ public class RestoreTask {
 
         languageManager.broadcastMessage("minebackup.restore.executing");
 
-        logger.info("RESTORE", "Saving worlds before shutdown.");
-        long saveStart = System.currentTimeMillis();
-        boolean allSaved = true;
-        for (World world : Bukkit.getWorlds()) {
-            try {
-                world.save();
-            } catch (Exception e) {
-                logger.error("RESTORE", "Failed to save world '" + world.getName() + "': " + e.getMessage());
-                allSaved = false;
-            }
+        LocalSaveCoordinator.SaveResult saveResult =
+                LocalSaveCoordinator.save(plugin, "RESTORE", "Restore shutdown pre-save");
+        if (saveResult.isPartialFailure()) {
+            logger.warn("RESTORE", "Restore shutdown pre-save finished with partial failure.");
         }
-        logger.info("RESTORE", "World save phase completed in " + (System.currentTimeMillis() - saveStart)
-                + "ms" + (allSaved ? "" : " (partial failure)"));
 
         int playerCount = Bukkit.getOnlinePlayers().size();
         logger.info("RESTORE", "Disconnecting " + playerCount + " player(s) before restore.");

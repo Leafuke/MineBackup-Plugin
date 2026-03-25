@@ -1,7 +1,6 @@
 package org.leafuke.mineBackupPlugin;
 
 import org.bukkit.Bukkit;
-import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -221,7 +220,6 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     }
 
     private void handleQuickBackup(CommandSender sender, String[] args) {
-        saveAllWorlds(sender);
         String command = args.length > 1 ? "BACKUP_CURRENT " + joinArgsFrom(args, 1) : "BACKUP_CURRENT";
         plugin.getBackupLogger().info("BACKUP", sender.getName() + " requested quick backup: " + command);
         executeRemoteCommand(sender, command);
@@ -402,24 +400,11 @@ public class MbCommand implements CommandExecutor, TabCompleter {
 
     private void saveAllWorlds(CommandSender sender) {
         plugin.getLanguageManager().sendMessage(sender, "minebackup.save.start");
-
-        long saveStart = System.currentTimeMillis();
-        int worldCount = 0;
-        boolean allSuccess = true;
-        for (World world : Bukkit.getWorlds()) {
-            try {
-                world.save();
-                worldCount++;
-            } catch (Exception e) {
-                plugin.getBackupLogger().error("SAVE", "Failed to save world '" + world.getName() + "': " + e.getMessage());
-                allSuccess = false;
-            }
-        }
-
-        long cost = System.currentTimeMillis() - saveStart;
-        plugin.getBackupLogger().info("SAVE", sender.getName() + " saved " + worldCount
-                + " world(s) in " + cost + "ms" + (allSuccess ? "" : " (partial failure)"));
-        plugin.getLanguageManager().sendMessage(sender, "minebackup.save.success");
+        LocalSaveCoordinator.SaveResult result =
+                LocalSaveCoordinator.save(plugin, "SAVE", "Manual local save requested by " + sender.getName());
+        plugin.getLanguageManager().sendMessage(sender, result.isPartialFailure()
+                ? "minebackup.save.fail"
+                : "minebackup.save.success");
     }
 
     private void queryBackend(String command, java.util.function.Consumer<String> callback) {
