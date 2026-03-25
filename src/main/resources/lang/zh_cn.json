@@ -128,6 +128,7 @@
   "minebackup.usage.snap": "§c用法：/mb snap <config_id> <world_index> <backup_file>",
   "minebackup.error.not_player": "§c该命令只能由玩家执行。",
   "minebackup.error.invalid_number": "§c数字格式无效。",
+  "minebackup.error.invalid_config_id": "§c配置 ID 无效。",
   "minebackup.error.no_world_found": "§c无法找到你所在的世界。",
   "minebackup.error.no_config_found": "§c无法找到当前世界对应的配置。",
   "minebackup.error.no_backup_found": "§c无法找到当前世界对应的备份文件。",

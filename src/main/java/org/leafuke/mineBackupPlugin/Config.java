@@ -53,11 +53,11 @@ public final class Config {
     }
 
     public static String getRestartMethod() {
-        return config.getString("restart.method", "spigot");
+        return config.getString("restart.method", "sidecar");
     }
 
     public static String getRestartScriptPath() {
-        return config.getString("restart.script-path", "./start.sh");
+        return config.getString("restart.script-path", "./start.bat");
     }
 
     public static int getSidecarStartTimeoutSeconds() {
@@ -81,11 +81,14 @@ public final class Config {
     }
 
     public static boolean hasAutoBackup() {
-        return getConfigId() != -1 && getWorldIndex() != -1 && getInternalTime() != -1;
+        return getConfigId() != null && !getConfigId().isBlank()
+                && getWorldIndex() >= 0
+                && getInternalTime() >= 0;
     }
 
-    public static int getConfigId() {
-        return config.getInt("auto-backup.config-id", -1);
+    public static String getConfigId() {
+        String value = config.getString("auto-backup.config-id", "");
+        return value == null ? "" : value.trim();
     }
 
     public static int getWorldIndex() {
@@ -96,7 +99,7 @@ public final class Config {
         return config.getInt("auto-backup.interval-seconds", -1);
     }
 
-    public static void setAutoBackup(MineBackupPlugin plugin, int configId, int worldIndex, int intervalSeconds) {
+    public static void setAutoBackup(MineBackupPlugin plugin, String configId, int worldIndex, int intervalSeconds) {
         config.set("auto-backup.config-id", configId);
         config.set("auto-backup.world-index", worldIndex);
         config.set("auto-backup.interval-seconds", intervalSeconds);
@@ -106,7 +109,7 @@ public final class Config {
     }
 
     public static void clearAutoBackup(MineBackupPlugin plugin) {
-        config.set("auto-backup.config-id", -1);
+        config.set("auto-backup.config-id", "");
         config.set("auto-backup.world-index", -1);
         config.set("auto-backup.interval-seconds", -1);
         plugin.saveConfig();

@@ -25,7 +25,7 @@ restart:
 
   # Script or command file used to start the server again.
   # In sidecar mode this script is launched by the sidecar process.
-  script-path: "./start.sh"
+  script-path: "./start.bat"
 
   sidecar:
     start-timeout-seconds: 5
@@ -37,6 +37,6 @@ logging:
   max-files: 5
 
 auto-backup:
-  config-id: -1
+  config-id: ""
   world-index: -1
   interval-seconds: -1

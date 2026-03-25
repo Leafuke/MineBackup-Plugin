@@ -1,11 +1,10 @@
 package org.leafuke.mineBackupPlugin.knotlink;
 
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -68,53 +67,31 @@ public final class OpenSocketQuerier {
         Objects.requireNonNull(question, "question");
 
         try (Socket socket = new Socket()) {
-            socket.connect(new java.net.InetSocketAddress(SERVER_IP, QUERIER_PORT), connectTimeoutMs);
+            socket.connect(new InetSocketAddress(SERVER_IP, QUERIER_PORT), connectTimeoutMs);
             socket.setSoTimeout(readTimeoutMs);
 
             try (PrintWriter out = new PrintWriter(new OutputStreamWriter(
                     socket.getOutputStream(), StandardCharsets.UTF_8), true);
-                 InputStream in = socket.getInputStream();
-                 ByteArrayOutputStream responseBuffer = new ByteArrayOutputStream()) {
+                 InputStream in = socket.getInputStream()) {
 
                 String packet = String.format("%s-%s&*&%s", appID, openSocketID, question);
                 LOGGER.info("Sending query to KnotLink: " + question);
                 out.print(packet);
                 out.flush();
-                socket.shutdownOutput();
 
-                byte[] buffer = new byte[4096];
-                boolean receivedAnyBytes = false;
-                while (true) {
-                    try {
-                        int bytesRead = in.read(buffer);
-                        if (bytesRead == -1) {
-                            break;
-                        }
-                        if (bytesRead > 0) {
-                            receivedAnyBytes = true;
-                            responseBuffer.write(buffer, 0, bytesRead);
-                        }
-                    } catch (SocketTimeoutException timeout) {
-                        if (receivedAnyBytes) {
-                            break;
-                        }
-                        LOGGER.warning("Timed out waiting for KnotLink response for command '" + question + "'");
-                        return "ERROR:NO_RESPONSE";
-                    }
+                byte[] buffer = new byte[8192];
+                int bytesRead = in.read(buffer);
+                if (bytesRead > 0) {
+                    String response = new String(buffer, 0, bytesRead, StandardCharsets.UTF_8);
+                    LOGGER.info("Received query response: " + response);
+                    return response;
                 }
 
-                if (!receivedAnyBytes) {
-                    LOGGER.warning("Received no response from KnotLink server.");
-                    return "ERROR:NO_RESPONSE";
-                }
-
-                String response = responseBuffer.toString(StandardCharsets.UTF_8);
-                LOGGER.info("Received query response: " + response);
-                return response;
+                LOGGER.warning("Received no response from KnotLink server.");
+                return "ERROR:NO_RESPONSE";
             }
         } catch (Exception e) {
-            LOGGER.warning("Failed to query KnotLink server for command '"
-                    + question + "': " + e.getMessage());
+            LOGGER.warning("Failed to query KnotLink server for command '" + question + "': " + e.getMessage());
             return "ERROR:COMMUNICATION_FAILED";
         }
     }

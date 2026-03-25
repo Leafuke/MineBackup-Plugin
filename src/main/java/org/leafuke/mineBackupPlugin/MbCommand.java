@@ -22,8 +22,8 @@ public class MbCommand implements CommandExecutor, TabCompleter {
     private static final String QUERIER_SOCKET_ID = MineBackupPlugin.QUERIER_SOCKET_ID;
     private static final long CACHE_TTL_MS = 10_000L;
     private static final long CURRENT_BACKUPS_CACHE_TTL_MS = 5_000L;
-    private static final int TAB_COMPLETE_CONNECT_TIMEOUT_MS = 300;
-    private static final int TAB_COMPLETE_READ_TIMEOUT_MS = 700;
+    private static final int TAB_COMPLETE_CONNECT_TIMEOUT_MS = 800;
+    private static final int TAB_COMPLETE_READ_TIMEOUT_MS = 1500;
 
     private static final List<String> SUBCOMMANDS = Arrays.asList(
             "help", "save", "list_configs", "list_worlds", "list_backups",
@@ -95,7 +95,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             }
             case "restore", "snap" -> {
                 if (args.length >= 4) {
-                    Integer configId = parseInteger(args[1]);
+                    String configId = normalizeConfigId(args[1]);
                     Integer worldIndex = parseInteger(args[2]);
                     if (configId != null && worldIndex != null) {
                         String current = joinArgsFrom(args, 3);
@@ -141,13 +141,13 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        Integer configId = parseInteger(args[1]);
+        String configId = normalizeConfigId(args[1]);
         if (configId == null) {
-            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_config_id");
             return;
         }
 
-        plugin.getLanguageManager().sendMessage(sender, "minebackup.list_worlds.start", String.valueOf(configId));
+        plugin.getLanguageManager().sendMessage(sender, "minebackup.list_worlds.start", configId);
         queryBackend("LIST_WORLDS " + configId, response -> handleListWorldsResponse(sender, response, configId));
     }
 
@@ -157,9 +157,13 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        Integer configId = parseInteger(args[1]);
+        String configId = normalizeConfigId(args[1]);
         Integer worldIndex = parseInteger(args[2]);
-        if (configId == null || worldIndex == null) {
+        if (configId == null) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_config_id");
+            return;
+        }
+        if (worldIndex == null) {
             plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
@@ -176,9 +180,13 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        Integer configId = parseInteger(args[1]);
+        String configId = normalizeConfigId(args[1]);
         Integer worldIndex = parseInteger(args[2]);
-        if (configId == null || worldIndex == null) {
+        if (configId == null) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_config_id");
+            return;
+        }
+        if (worldIndex == null) {
             plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
@@ -197,9 +205,13 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        Integer configId = parseInteger(args[1]);
+        String configId = normalizeConfigId(args[1]);
         Integer worldIndex = parseInteger(args[2]);
-        if (configId == null || worldIndex == null) {
+        if (configId == null) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_config_id");
+            return;
+        }
+        if (worldIndex == null) {
             plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
@@ -226,10 +238,14 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        Integer configId = parseInteger(args[1]);
+        String configId = normalizeConfigId(args[1]);
         Integer worldIndex = parseInteger(args[2]);
         Integer intervalSeconds = parseInteger(args[3]);
-        if (configId == null || worldIndex == null || intervalSeconds == null) {
+        if (configId == null) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_config_id");
+            return;
+        }
+        if (worldIndex == null || intervalSeconds == null) {
             plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
@@ -246,9 +262,13 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        Integer configId = parseInteger(args[1]);
+        String configId = normalizeConfigId(args[1]);
         Integer worldIndex = parseInteger(args[2]);
-        if (configId == null || worldIndex == null) {
+        if (configId == null) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_config_id");
+            return;
+        }
+        if (worldIndex == null) {
             plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
@@ -265,9 +285,13 @@ public class MbCommand implements CommandExecutor, TabCompleter {
             return;
         }
 
-        Integer configId = parseInteger(args[1]);
+        String configId = normalizeConfigId(args[1]);
         Integer worldIndex = parseInteger(args[2]);
-        if (configId == null || worldIndex == null) {
+        if (configId == null) {
+            plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_config_id");
+            return;
+        }
+        if (worldIndex == null) {
             plugin.getLanguageManager().sendMessage(sender, "minebackup.error.invalid_number");
             return;
         }
@@ -329,7 +353,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
 
         String autoStatus = Config.hasAutoBackup()
                 ? languageManager.getTranslation(sender, "minebackup.status.auto_backup_on",
-                String.valueOf(Config.getConfigId()),
+                Config.getConfigId(),
                 String.valueOf(Config.getWorldIndex()),
                 String.valueOf(Config.getInternalTime()))
                 : languageManager.getTranslation(sender, "minebackup.status.auto_backup_off");
@@ -462,7 +486,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         });
     }
 
-    private void handleListWorldsResponse(CommandSender sender, String response, int configId) {
+    private void handleListWorldsResponse(CommandSender sender, String response, String configId) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
                 plugin.getLanguageManager().sendMessage(sender, "minebackup.list_worlds.fail",
@@ -487,7 +511,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         });
     }
 
-    private void handleListBackupsResponse(CommandSender sender, String response, int configId, int worldIndex) {
+    private void handleListBackupsResponse(CommandSender sender, String response, String configId, int worldIndex) {
         Bukkit.getScheduler().runTask(plugin, () -> {
             if (response == null || !response.startsWith("OK:")) {
                 plugin.getLanguageManager().sendMessage(sender, "minebackup.list_backups.fail",
@@ -513,7 +537,7 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         });
     }
 
-    private List<String> getBackupFiles(int configId, int worldIndex) {
+    private List<String> getBackupFiles(String configId, int worldIndex) {
         String cacheKey = configId + ":" + worldIndex;
         long now = System.currentTimeMillis();
         List<String> cached = backupFilesCache.get(cacheKey);
@@ -579,6 +603,14 @@ public class MbCommand implements CommandExecutor, TabCompleter {
         } catch (NumberFormatException ignored) {
             return null;
         }
+    }
+
+    private static String normalizeConfigId(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private static String joinArgsFrom(String[] args, int startIndex) {

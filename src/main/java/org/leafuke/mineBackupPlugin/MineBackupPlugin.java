@@ -11,6 +11,7 @@ import org.leafuke.mineBackupPlugin.knotlink.SignalSubscriber;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class MineBackupPlugin extends JavaPlugin {
     public static final String PLUGIN_VERSION = "2.0.0";
@@ -27,6 +28,7 @@ public final class MineBackupPlugin extends JavaPlugin {
     private BukkitTask relayPollTask;
     private RestartRelayStore.Session relaySession;
     private volatile String lastHandshakeBroadcastVersion;
+    private final Map<String, Boolean> worldAutoSaveStates = new ConcurrentHashMap<>();
 
     public static MineBackupPlugin getInstance() {
         return instance;
@@ -88,6 +90,8 @@ public final class MineBackupPlugin extends JavaPlugin {
             backupLogger.info("SYSTEM", "KnotLink subscriber stopped.");
         }
 
+        restoreWorldAutoSave();
+
         OpenSocketQuerier.shutdownExecutor();
 
         if (backupLogger != null) {
@@ -109,7 +113,7 @@ public final class MineBackupPlugin extends JavaPlugin {
 
     private void restoreAutoBackupIfNeeded() {
         if (Config.hasAutoBackup()) {
-            String command = String.format("AUTO_BACKUP %d %d %d",
+            String command = String.format("AUTO_BACKUP %s %d %d",
                     Config.getConfigId(), Config.getWorldIndex(), Config.getInternalTime());
             OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID, command);
             backupLogger.info("AUTO_BACKUP", "Sent auto backup request from config: " + command);
@@ -220,11 +224,17 @@ public final class MineBackupPlugin extends JavaPlugin {
         backupLogger.info("EVENT", "Received event: " + eventType + " | data=" + eventData);
         switch (eventType) {
             case "handshake" -> handleHandshake(eventData);
+            case "handshake_ack", "list_configs", "list_worlds", "list_backups", "list_backups_current" ->
+                    handleInternalEvent(eventType, eventData);
             case "pre_hot_backup" -> handlePreHotBackup(eventData);
             case "pre_hot_restore" -> handlePreHotRestore(eventData);
             case "restore_finished", "restore_success" -> handleRestoreFinished(eventData, eventType);
             case "rejoin_world" -> handleRejoinWorld(eventData);
             case "game_session_start" -> backupLogger.info("SESSION", "Game session started, world=" + eventData.get("world"));
+            case "backup_success", "backup_failed" -> {
+                handleBackupCompletionEvent(eventType, eventData);
+                Bukkit.getScheduler().runTask(this, () -> broadcastEvent(eventType, eventData));
+            }
             default -> Bukkit.getScheduler().runTask(this, () -> broadcastEvent(eventType, eventData));
         }
     }
@@ -309,6 +319,7 @@ public final class MineBackupPlugin extends JavaPlugin {
                 languageManager.broadcastMessage("minebackup.broadcast.hot_backup_warn", worldName);
             }
 
+            freezeWorldAutoSave();
             languageManager.broadcastMessage("minebackup.broadcast.hot_backup_complete");
             OpenSocketQuerier.query(QUERIER_APP_ID, QUERIER_SOCKET_ID, "WORLD_SAVED");
             backupLogger.info("BACKUP", "Sent WORLD_SAVED notification.");
@@ -378,6 +389,7 @@ public final class MineBackupPlugin extends JavaPlugin {
         if (!"success".equalsIgnoreCase(status)) {
             HotRestoreState.reset();
             finishRelaySession("restore finished with non-success status");
+            restoreWorldAutoSave();
             return;
         }
 
@@ -385,6 +397,7 @@ public final class MineBackupPlugin extends JavaPlugin {
             languageManager.broadcastMessage("minebackup.restore.success");
             HotRestoreState.isRestoring = false;
             HotRestoreState.waitingForServerStopAck = false;
+            restoreWorldAutoSave();
         });
     }
 
@@ -393,8 +406,56 @@ public final class MineBackupPlugin extends JavaPlugin {
         Bukkit.getScheduler().runTask(this, () -> {
             HotRestoreState.reset();
             languageManager.broadcastMessage("minebackup.restore.rejoin_ready");
+            restoreWorldAutoSave();
             finishRelaySession("rejoin_world received");
         });
+    }
+
+    private void handleInternalEvent(String eventType, Map<String, String> eventData) {
+        if (Config.isDebug()) {
+            backupLogger.debug("EVENT", "Ignoring internal event " + eventType + " with data=" + eventData);
+        }
+    }
+
+    private void handleBackupCompletionEvent(String eventType, Map<String, String> eventData) {
+        restoreWorldAutoSave();
+        backupLogger.info("BACKUP", "Hot backup cycle finished with event " + eventType);
+    }
+
+    private void freezeWorldAutoSave() {
+        Runnable action = () -> {
+            for (World world : Bukkit.getWorlds()) {
+                String worldName = world.getName();
+                worldAutoSaveStates.putIfAbsent(worldName, world.isAutoSave());
+                if (world.isAutoSave()) {
+                    world.setAutoSave(false);
+                    backupLogger.info("BACKUP", "Disabled auto-save for world '" + worldName + "' during hot backup.");
+                }
+            }
+        };
+        if (Bukkit.isPrimaryThread()) {
+            action.run();
+        } else {
+            Bukkit.getScheduler().runTask(this, action);
+        }
+    }
+
+    private void restoreWorldAutoSave() {
+        Runnable action = () -> {
+            for (World world : Bukkit.getWorlds()) {
+                Boolean previousState = worldAutoSaveStates.remove(world.getName());
+                if (previousState != null) {
+                    world.setAutoSave(previousState);
+                    backupLogger.info("BACKUP", "Restored auto-save for world '" + world.getName()
+                            + "' to " + previousState + ".");
+                }
+            }
+        };
+        if (Bukkit.isPrimaryThread()) {
+            action.run();
+        } else if (isEnabled()) {
+            Bukkit.getScheduler().runTask(this, action);
+        }
     }
 
     private void broadcastEvent(String eventType, Map<String, String> eventData) {
