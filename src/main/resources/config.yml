@@ -1,45 +1,29 @@
-# ============================================================
-# MineBackup Plugin Configuration
-# Spigot/Paper 1.21
-# ============================================================
+# MineBackupPlugin 3 configuration
+config-version: 2
 
 general:
   debug: false
 
 backup:
-  freeze-timeout-seconds: 60
+  freeze-timeout-seconds: 180
 
 restore:
-  require-confirm: true
-  confirm-timeout-seconds: 60
   countdown-seconds: 10
-  remote-restore-countdown: true
-  remote-countdown-seconds: 10
 
-restart:
-  enabled: true
+dedicated-restore:
+  # SIDECAR or DISABLED
+  mode: SIDECAR
+  # Empty: discover exactly one start.bat/start.cmd/run.bat/run.cmd or start.sh/run.sh.
+  restart-script: ""
+  sidecar-start-timeout-seconds: 5
+  world-release-timeout-seconds: 8
+  operation-timeout-seconds: 3600
 
-  # Available values:
-  #   spigot  - use Spigot's restart flow and configured restart-script
-  #   script  - only write the restart flag; external tooling must restart the server
-  #   sidecar - launch MineBackup's built-in Java sidecar to relay events and run the restart script
-  #   none    - shut down only
-  method: sidecar
-
-  # Script or command file used to start the server again.
-  # In sidecar mode this script is launched by the sidecar process.
-  script-path: "./start.bat"
-
-  sidecar:
-    start-timeout-seconds: 5
-    relay-timeout-seconds: 20
+auto-backup:
+  # 0 disables automatic current-world backups.
+  interval-minutes: 0
 
 logging:
   enabled: true
-  max-size-mb: 10
-  max-files: 5
-
-auto-backup:
-  config-id: ""
-  world-index: -1
-  interval-seconds: -1
+  max-size-mib: 10
+  retained-files: 5
