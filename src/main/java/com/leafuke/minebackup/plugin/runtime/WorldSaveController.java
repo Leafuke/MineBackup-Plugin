@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 public final class WorldSaveController implements AutoCloseable {
     private final WorldAccess worlds;
     private final ScheduledExecutorService scheduler;
-    private final Duration freezeTimeout;
+    private volatile Duration freezeTimeout;
     private final Object lock = new Object();
 
     private UUID frozenFor;
@@ -29,6 +29,14 @@ public final class WorldSaveController implements AutoCloseable {
         if (freezeTimeout.isZero() || freezeTimeout.isNegative()) {
             throw new IllegalArgumentException("freezeTimeout must be positive");
         }
+    }
+
+    public void setFreezeTimeout(Duration value) {
+        Objects.requireNonNull(value, "value");
+        if (value.isZero() || value.isNegative()) {
+            throw new IllegalArgumentException("freezeTimeout must be positive");
+        }
+        freezeTimeout = value;
     }
 
     public CompletableFuture<List<Path>> saveOnly() {

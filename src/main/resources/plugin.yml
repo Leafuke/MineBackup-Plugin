@@ -1,20 +1,17 @@
 name: MineBackupPlugin
 version: '${version}'
-main: org.leafuke.mineBackupPlugin.MineBackupPlugin
+main: com.leafuke.minebackup.plugin.MineBackupPlugin
 api-version: '1.21'
-description: MineBackup integration plugin for Spigot/Paper servers
+description: Safe FolderRewind integration for Spigot and Paper servers
+author: Leafuke
 
 commands:
   mb:
-    description: Main MineBackup command
-    usage: /mb <subcommand> [args...]
-    permission: minebackup.command
-  minebackup:
-    description: Legacy command redirected to /mb
-    usage: /minebackup
+    description: MineBackup administration command
+    usage: /mb help
     permission: minebackup.command
 
 permissions:
   minebackup.command:
-    description: Allows use of MineBackup commands
+    description: Allows all MineBackup operations
     default: op

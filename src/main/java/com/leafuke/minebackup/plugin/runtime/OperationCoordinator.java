@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 public final class OperationCoordinator {
     private final ScheduledExecutorService scheduler;
@@ -16,7 +17,7 @@ public final class OperationCoordinator {
     private Operation active;
     private OperationResult lastResult;
     private ScheduledFuture<?> countdown;
-    private Runnable countdownSubmit;
+    private Consumer<UUID> countdownSubmit;
 
     public OperationCoordinator(ScheduledExecutorService scheduler) {
         this(scheduler, Clock.systemUTC());
@@ -40,20 +41,18 @@ public final class OperationCoordinator {
             String actor,
             String target,
             int seconds,
-            Runnable submit) {
+            Consumer<UUID> submit) {
         Objects.requireNonNull(submit, "submit");
         Optional<Operation> created = begin(UUID.randomUUID(), Type.RESTORE, origin, actor, target,
-                seconds == 0 ? Phase.SUBMITTED : Phase.COUNTDOWN);
+                Phase.COUNTDOWN);
         if (created.isEmpty()) {
             return Optional.empty();
         }
-        if (seconds == 0) {
-            submit.run();
-            return created;
-        }
         countdownSubmit = submit;
-        UUID id = created.orElseThrow().id();
-        countdown = scheduler.schedule(() -> submitCountdown(id), seconds, TimeUnit.SECONDS);
+        if (seconds > 0) {
+            UUID id = created.orElseThrow().id();
+            countdown = scheduler.schedule(() -> submitCountdown(id), seconds, TimeUnit.SECONDS);
+        }
         return created;
     }
 
@@ -79,17 +78,19 @@ public final class OperationCoordinator {
     }
 
     public boolean confirmRestore() {
-        Runnable submit;
+        Consumer<UUID> submit;
+        UUID id;
         synchronized (this) {
             if (active == null || active.type() != Type.RESTORE || active.phase() != Phase.COUNTDOWN) {
                 return false;
             }
             cancelCountdownLocked();
             active = active.withPhase(Phase.SUBMITTED);
+            id = active.id();
             submit = countdownSubmit;
             countdownSubmit = null;
         }
-        submit.run();
+        submit.accept(id);
         return true;
     }
 
@@ -139,7 +140,7 @@ public final class OperationCoordinator {
     }
 
     private void submitCountdown(UUID id) {
-        Runnable submit;
+        Consumer<UUID> submit;
         synchronized (this) {
             if (!matches(id) || active.phase() != Phase.COUNTDOWN) {
                 return;
@@ -149,7 +150,7 @@ public final class OperationCoordinator {
             submit = countdownSubmit;
             countdownSubmit = null;
         }
-        submit.run();
+        submit.accept(id);
     }
 
     private boolean matches(UUID id) {

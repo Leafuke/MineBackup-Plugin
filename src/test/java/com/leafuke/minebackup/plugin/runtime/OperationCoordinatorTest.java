@@ -40,7 +40,7 @@ class OperationCoordinatorTest {
         OperationCoordinator coordinator = new OperationCoordinator(scheduler);
         AtomicInteger submitted = new AtomicInteger();
         coordinator.beginRestoreCountdown(OperationCoordinator.Origin.CONSOLE, "console", "latest", 60,
-                submitted::incrementAndGet).orElseThrow();
+                ignored -> submitted.incrementAndGet()).orElseThrow();
         assertTrue(coordinator.confirmRestore());
         assertEquals(1, submitted.get());
         assertFalse(coordinator.confirmRestore());
@@ -49,8 +49,21 @@ class OperationCoordinatorTest {
         UUID active = coordinator.active().orElseThrow().id();
         coordinator.complete(active, OperationCoordinator.Outcome.FAILED, "test");
         coordinator.beginRestoreCountdown(OperationCoordinator.Origin.PLAYER, "Bob", "latest", 60,
-                submitted::incrementAndGet).orElseThrow();
+                ignored -> submitted.incrementAndGet()).orElseThrow();
         assertTrue(coordinator.cancelPendingRestore());
+        assertEquals(1, submitted.get());
+    }
+
+    @Test
+    void zeroCountdownLetsCallerRegisterBeforeImmediateConfirmation() {
+        OperationCoordinator coordinator = new OperationCoordinator(scheduler);
+        AtomicInteger submitted = new AtomicInteger();
+
+        coordinator.beginRestoreCountdown(OperationCoordinator.Origin.CONSOLE, "console", "latest", 0,
+                ignored -> submitted.incrementAndGet()).orElseThrow();
+
+        assertEquals(0, submitted.get());
+        assertTrue(coordinator.confirmRestore());
         assertEquals(1, submitted.get());
     }
 }
