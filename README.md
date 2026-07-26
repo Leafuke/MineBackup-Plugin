@@ -19,6 +19,16 @@ KnotLink 不可用时插件仍会加载并自动重连，`/mb save` 仍可用；
 3. 确保 FolderRewind、Minecraft 专用扩展和 KnotLink 正在同一台计算机运行。
 4. 执行 `/mb status` 检查连接和 Sidecar 状态。
 
+语言配置位于 `config.yml`：
+
+```yaml
+localization:
+  default-language: zh_cn
+  follow-player-locale: true
+```
+
+控制台使用 `default-language`；启用 `follow-player-locale` 后，每名玩家会按自己的 Minecraft 客户端语言收到消息。目前完整提供 `zh_cn` 和 `en_us`，其他客户端语言回退到英文。修改后执行 `/mb reload` 即可生效。
+
 从 2.x 升级时，旧配置不会被猜测性迁移。插件会将其保存为 `config-v1-backup-时间.yml`，然后生成带有 `config-version: 2` 的新配置。
 
 ## 命令
@@ -49,6 +59,8 @@ KnotLink 不可用时插件仍会加载并自动重连，`/mb save` 仍可用；
 `dedicated-restore.mode` 默认为 `SIDECAR`。还原前插件会验证唯一启动脚本、保存全部世界并启动纯 JDK Sidecar；Sidecar 确认已经订阅 KnotLink 后，服务器才会踢出玩家并正常关闭。
 
 Sidecar 只有在父 JVM 已退出、所有已加载世界连续三次确认释放，并收到 FolderRewind 明确的成功、失败或取消终态后，才启动一次服务器脚本。断连、超时或未知结果会记录为 `UNCERTAIN` 并保持服务器离线。
+
+插件不会让已被踢出的玩家自动重连。还原终态成功后，Sidecar 只负责执行配置的启动脚本；玩家需要等待服务器启动完成后手动重新连接。
 
 不要同时启用面板或 wrapper 的“进程退出立即重启”，否则可能在 FolderRewind 写入世界时抢先启动。完整流程与故障恢复见 `docs/DEDICATED-RESTORE.md`。
 

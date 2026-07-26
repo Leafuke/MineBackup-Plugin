@@ -42,3 +42,11 @@ Windows 批处理经 `cmd.exe /c` 执行，Unix shell 经 `/bin/sh` 执行，其
 - `UNCERTAIN`：先确认 FolderRewind 已停止写入且世界一致，再手动启动。
 - 不要把 KnotLink 静默视为安全失败。
 - 禁用面板/wrapper 的立即自动重启，避免绕过 Sidecar 终态门。
+
+## Paper 26.1 diagnostics
+
+- `sun.misc.Unsafe::objectFieldOffset` 且调用方为 Paper 自带的 `org.joml`：这是 Java 25 对服务端依赖的弃用提示，不由 MineBackupPlugin 触发，不代表备份失败。
+- `A manual (plugin-induced) save has been detected...`：3.0.0 已在同步保存前临时暂停各世界自动保存，正常情况下不应再由本插件触发；若仍出现，请保留完整时间线并确认是否有其他存档插件调用保存。
+- `Corrupt regionfile header detected`：这是数据一致性故障，不能忽略。立即停止写入，保留 Paper 生成的 `.backup`、出问题的 `.mca`、对应 MineBackup 归档、Sidecar 状态文件和 FolderRewind 日志。先在副本上验证归档，再决定回滚或采用 Paper 的修复结果；不要连续覆盖原备份。
+
+区域文件告警只说明“启动后读到的文件已不一致”，单份服务端日志无法区分损坏发生在源世界、备份读取、归档存储还是还原写入阶段。排查时应比较还原前归档中的 region 文件校验值，并核对 FolderRewind 在收到 `WORLD_SAVE_AND_EXIT_COMPLETE` 后才开始覆盖。
