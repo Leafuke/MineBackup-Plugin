@@ -93,6 +93,9 @@ public final class ConfigStore {
         return new PluginConfig(
                 PluginConfig.CURRENT_VERSION,
                 new PluginConfig.General(yaml.getBoolean("general.debug", false)),
+                new PluginConfig.Localization(
+                        yaml.getString("localization.default-language", "zh_cn"),
+                        yaml.getBoolean("localization.follow-player-locale", true)),
                 new PluginConfig.Backup(integer(yaml, "backup.freeze-timeout-seconds", 180, 10, 3_600)),
                 new PluginConfig.Restore(integer(yaml, "restore.countdown-seconds", 10, 0, 300)),
                 new PluginConfig.DedicatedRestore(

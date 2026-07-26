@@ -24,6 +24,8 @@ class ConfigStoreTest {
         PluginConfig defaults = store.load();
 
         assertEquals(2, defaults.version());
+        assertEquals("zh_cn", defaults.localization().defaultLanguage());
+        assertTrue(defaults.localization().followPlayerLocale());
         assertEquals(180, defaults.backup().freezeTimeoutSeconds());
         assertFalse(defaults.autoBackup().enabled());
 

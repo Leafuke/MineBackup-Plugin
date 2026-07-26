@@ -2,6 +2,7 @@ package com.leafuke.minebackup.plugin.message;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import com.leafuke.minebackup.plugin.config.PluginConfig;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -15,14 +16,20 @@ import java.util.Locale;
 import java.util.Map;
 
 public final class MessageService {
-    private static final String DEFAULT_LANGUAGE = "en_us";
+    private static final String FALLBACK_LANGUAGE = "en_us";
     private final JavaPlugin plugin;
     private final Map<String, Map<String, String>> languages = new HashMap<>();
+    private volatile PluginConfig.Localization configuration;
 
-    public MessageService(JavaPlugin plugin) throws IOException {
+    public MessageService(JavaPlugin plugin, PluginConfig.Localization configuration) throws IOException {
         this.plugin = plugin;
         load("en_us");
         load("zh_cn");
+        configure(configuration);
+    }
+
+    public void configure(PluginConfig.Localization value) {
+        configuration = java.util.Objects.requireNonNull(value, "value");
     }
 
     public void send(CommandSender sender, String key, Object... arguments) {
@@ -30,9 +37,12 @@ public final class MessageService {
     }
 
     public String text(CommandSender sender, String key, Object... arguments) {
-        String language = sender instanceof Player player ? normalize(player.getLocale()) : DEFAULT_LANGUAGE;
-        Map<String, String> selected = languages.getOrDefault(language, languages.get(DEFAULT_LANGUAGE));
-        String template = selected.getOrDefault(key, languages.get(DEFAULT_LANGUAGE).getOrDefault(key, key));
+        PluginConfig.Localization snapshot = configuration;
+        String language = sender instanceof Player player && snapshot.followPlayerLocale()
+                ? normalize(player.getLocale())
+                : snapshot.defaultLanguage();
+        Map<String, String> selected = languages.getOrDefault(language, languages.get(FALLBACK_LANGUAGE));
+        String template = selected.getOrDefault(key, languages.get(FALLBACK_LANGUAGE).getOrDefault(key, key));
         try {
             return arguments.length == 0 ? template : String.format(template, arguments);
         } catch (RuntimeException exception) {
@@ -57,7 +67,7 @@ public final class MessageService {
     }
 
     private static String normalize(String locale) {
-        String normalized = locale == null ? DEFAULT_LANGUAGE : locale.toLowerCase(Locale.ROOT).replace('-', '_');
+        String normalized = locale == null ? FALLBACK_LANGUAGE : locale.toLowerCase(Locale.ROOT).replace('-', '_');
         return normalized.startsWith("zh") ? "zh_cn" : "en_us";
     }
 }

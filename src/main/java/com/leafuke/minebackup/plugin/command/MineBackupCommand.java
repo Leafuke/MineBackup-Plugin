@@ -30,7 +30,7 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
         try {
             tokens = CommandTokenizer.tokenize(args);
         } catch (IllegalArgumentException exception) {
-            runtime.messages().send(sender, "invalid_argument", exception.getMessage());
+            runtime.messages().send(sender, "argument_parse_failed");
             return true;
         }
         if (tokens.isEmpty() || tokens.get(0).equalsIgnoreCase("help")) {
@@ -46,7 +46,7 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
                 case "restore" -> {
                     String file = join(tokens, 1, 255);
                     if (!file.isBlank() && !safeFileName(file)) {
-                        throw new IllegalArgumentException("Backup file must be a single safe file name");
+                        throw input("invalid_backup_file");
                     }
                     runtime.restore(sender, file);
                 }
@@ -58,6 +58,8 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
                 case "reload" -> requireSize(tokens, 1, "/mb reload", () -> runtime.reload(sender));
                 default -> runtime.messages().send(sender, "invalid_command");
             }
+        } catch (CommandInputException exception) {
+            runtime.messages().send(sender, exception.key, exception.arguments);
         } catch (IllegalArgumentException exception) {
             runtime.messages().send(sender, "invalid_argument", exception.getMessage());
         }
@@ -72,19 +74,19 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
             runtime.listFolders(sender, tokens.get(2));
         } else if (tokens.size() == 4 && tokens.get(1).equalsIgnoreCase("backups")) {
             requireId(tokens.get(2));
-            requireText(tokens.get(3), "folder", 255);
+            requireText(tokens.get(3), 255);
             runtime.listBackups(sender, tokens.get(2), tokens.get(3));
         } else {
-            throw new IllegalArgumentException("Usage: /mb list configs|folders <config-id>|backups <config-id> <folder>");
+            throw input("usage", "/mb list configs | folders <config-id> | backups <config-id> <folder>");
         }
     }
 
     private void target(CommandSender sender, List<String> tokens) {
         if (tokens.size() < 4 || !tokens.get(1).equalsIgnoreCase("backup")) {
-            throw new IllegalArgumentException("Usage: /mb target backup <config-id> <folder> [comment]");
+            throw input("usage", "/mb target backup <config-id> <folder> [comment]");
         }
         requireId(tokens.get(2));
-        requireText(tokens.get(3), "folder", 255);
+        requireText(tokens.get(3), 255);
         runtime.targetBackup(sender, tokens.get(2), tokens.get(3), join(tokens, 4, 1_024));
     }
 
@@ -94,30 +96,26 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
             return;
         }
         if (tokens.size() != 3 || !tokens.get(1).equalsIgnoreCase("start")) {
-            throw new IllegalArgumentException("Usage: /mb auto start <minutes>|stop");
+            throw input("usage", "/mb auto start <minutes> | /mb auto stop");
         }
         int minutes;
         try {
             minutes = Integer.parseInt(tokens.get(2));
         } catch (NumberFormatException exception) {
-            throw new IllegalArgumentException("Minutes must be a number");
+            throw input("invalid_minutes_number");
         }
         if (minutes < 1 || minutes > PluginConfig.MAX_AUTO_BACKUP_INTERVAL_MINUTES) {
-            throw new IllegalArgumentException("Minutes are outside the supported range");
+            throw input("invalid_minutes_range", PluginConfig.MAX_AUTO_BACKUP_INTERVAL_MINUTES);
         }
         runtime.startAutoBackup(sender, minutes);
     }
 
     private void help(CommandSender sender) {
         runtime.messages().send(sender, "help_title");
-        sender.sendMessage("§b/mb save §7- Save players and all loaded worlds");
-        sender.sendMessage("§b/mb backup [comment] §7- Back up the current world");
-        sender.sendMessage("§b/mb restore [backup-file] §7- Safely restore the current world");
-        sender.sendMessage("§b/mb confirm | stop §7- Control a pending restore countdown");
-        sender.sendMessage("§b/mb list configs|folders|backups §7- Query FolderRewind catalogs");
-        sender.sendMessage("§b/mb target backup <config-id> <folder> [comment]");
-        sender.sendMessage("§b/mb auto start <minutes> | auto stop");
-        sender.sendMessage("§b/mb status | reload");
+        for (String key : List.of("help_save", "help_backup", "help_restore", "help_restore_control",
+                "help_list", "help_target_backup", "help_auto", "help_status")) {
+            runtime.messages().send(sender, key);
+        }
     }
 
     @Override
@@ -161,20 +159,20 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
 
     private static void requireSize(List<String> tokens, int size, String usage, Runnable action) {
         if (tokens.size() != size) {
-            throw new IllegalArgumentException("Usage: " + usage);
+            throw input("usage", usage);
         }
         action.run();
     }
 
     private static void requireId(String value) {
         if (!value.matches("[A-Za-z0-9_-]{1,128}")) {
-            throw new IllegalArgumentException("Invalid config ID");
+            throw input("invalid_config_id");
         }
     }
 
-    private static void requireText(String value, String label, int maximum) {
+    private static void requireText(String value, int maximum) {
         if (value.isBlank() || value.length() > maximum || value.chars().anyMatch(Character::isISOControl)) {
-            throw new IllegalArgumentException("Invalid " + label);
+            throw input("invalid_text", maximum);
         }
     }
 
@@ -184,7 +182,7 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
         }
         String result = String.join(" ", values.subList(start, values.size())).trim();
         if (result.length() > maximum || result.chars().anyMatch(Character::isISOControl)) {
-            throw new IllegalArgumentException("Argument is too long or contains control characters");
+            throw input("invalid_text", maximum);
         }
         return result;
     }
@@ -201,6 +199,21 @@ public final class MineBackupCommand implements CommandExecutor, TabCompleter {
             } catch (RuntimeException exception) {
                 return false;
             }
+        }
+    }
+
+    private static CommandInputException input(String key, Object... arguments) {
+        return new CommandInputException(key, arguments);
+    }
+
+    /** 将可预期的输入错误保留为消息键，避免把英文异常文本直接展示给玩家。 */
+    private static final class CommandInputException extends IllegalArgumentException {
+        private final String key;
+        private final Object[] arguments;
+
+        private CommandInputException(String key, Object... arguments) {
+            this.key = key;
+            this.arguments = arguments;
         }
     }
 }

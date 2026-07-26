@@ -5,6 +5,7 @@ import java.util.Objects;
 public record PluginConfig(
         int version,
         General general,
+        Localization localization,
         Backup backup,
         Restore restore,
         DedicatedRestore dedicatedRestore,
@@ -18,6 +19,7 @@ public record PluginConfig(
             throw new IllegalArgumentException("Unsupported config version: " + version);
         }
         Objects.requireNonNull(general, "general");
+        Objects.requireNonNull(localization, "localization");
         Objects.requireNonNull(backup, "backup");
         Objects.requireNonNull(restore, "restore");
         Objects.requireNonNull(dedicatedRestore, "dedicatedRestore");
@@ -26,11 +28,26 @@ public record PluginConfig(
     }
 
     public PluginConfig withAutoBackupInterval(int minutes) {
-        return new PluginConfig(version, general, backup, restore, dedicatedRestore,
+        return new PluginConfig(version, general, localization, backup, restore, dedicatedRestore,
                 new AutoBackup(minutes), logging);
     }
 
     public record General(boolean debug) {
+    }
+
+    public record Localization(String defaultLanguage, boolean followPlayerLocale) {
+        public Localization {
+            defaultLanguage = normalizeLanguage(defaultLanguage);
+        }
+
+        private static String normalizeLanguage(String value) {
+            if (value == null) {
+                return "zh_cn";
+            }
+            return value.trim().toLowerCase(java.util.Locale.ROOT).replace('-', '_').startsWith("zh")
+                    ? "zh_cn"
+                    : "en_us";
+        }
     }
 
     public record Backup(int freezeTimeoutSeconds) {

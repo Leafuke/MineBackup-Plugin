@@ -4,6 +4,12 @@ config-version: 2
 general:
   debug: false
 
+localization:
+  # zh_cn or en_us. Console and non-player messages use this language.
+  default-language: zh_cn
+  # Each player receives messages in their Minecraft client language when possible.
+  follow-player-locale: true
+
 backup:
   freeze-timeout-seconds: 180
 

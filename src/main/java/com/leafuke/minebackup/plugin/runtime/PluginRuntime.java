@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
@@ -53,6 +54,8 @@ public final class PluginRuntime implements AutoCloseable {
     private final SuggestionCache suggestions = new SuggestionCache();
     private final Map<UUID, CompletableFuture<Void>> completions = new ConcurrentHashMap<>();
     private final Object handshakeLock = new Object();
+    private final Object restoreAnnouncementLock = new Object();
+    private final List<ScheduledFuture<?>> restoreAnnouncements = new ArrayList<>();
 
     private volatile PluginConfig config;
     private volatile AuditLog audit;
@@ -63,7 +66,7 @@ public final class PluginRuntime implements AutoCloseable {
         this.plugin = plugin;
         configStore = new ConfigStore(plugin.getDataFolder().toPath(), plugin.getLogger());
         config = configStore.load();
-        messages = new MessageService(plugin);
+        messages = new MessageService(plugin, config.localization());
         platform = new BukkitWorldAccess(plugin);
         operations = new OperationCoordinator(scheduler);
         worldSave = new WorldSaveController(platform, scheduler,
@@ -105,7 +108,7 @@ public final class PluginRuntime implements AutoCloseable {
                 messages.send(sender, "save_success", paths.size());
             } else {
                 finish(operation, OperationCoordinator.Outcome.FAILED, message(error));
-                messages.send(sender, "request_failed", message(error));
+                messages.send(sender, "save_failed", message(error));
             }
         }));
     }
@@ -133,7 +136,7 @@ public final class PluginRuntime implements AutoCloseable {
         if (sender != null) {
             messages.send(sender, "backup_submitted", operation.id());
         } else {
-            platform.broadcast("§6[MineBackup] §eAutomatic current-world backup submitted.");
+            broadcast("auto_backup_submitted");
         }
         KnotLinkRequest request = KnotLinkRequest.command("BACKUP").conversation(operation.id())
                 .field("current_save", true);
@@ -182,7 +185,7 @@ public final class PluginRuntime implements AutoCloseable {
         OperationCoordinator.Operation operation = started.orElseThrow();
         register(operation);
         audit.operation(operation, "countdown", "restore preflight passed");
-        platform.broadcast(messages.text(sender, "restore_countdown", config.restore().countdownSeconds()));
+        announceRestoreCountdown(operation, file, config.restore().countdownSeconds());
         if (config.restore().countdownSeconds() == 0) {
             operations.confirmRestore();
         }
@@ -198,10 +201,11 @@ public final class PluginRuntime implements AutoCloseable {
 
     public void cancelRestore(CommandSender sender) {
         if (operations.cancelPendingRestore()) {
+            clearRestoreAnnouncements();
             OperationCoordinator.OperationResult result = operations.lastResult().orElseThrow();
             completeWaiter(result.operation().id());
             audit.operation(result.operation(), "cancelled", result.detail());
-            platform.broadcast(messages.text(sender, "restore_cancelled"));
+            broadcast("restore_cancelled");
         } else {
             messages.send(sender, "no_pending_restore");
         }
@@ -212,6 +216,8 @@ public final class PluginRuntime implements AutoCloseable {
         if (operation == null) {
             return;
         }
+        clearRestoreAnnouncements();
+        broadcast("restore_submitted");
         audit.operation(operation, "submitted", "restore submitted to FolderRewind");
         KnotLinkRequest request = KnotLinkRequest.command("RESTORE").conversation(id)
                 .field("current_save", true);
@@ -234,20 +240,23 @@ public final class PluginRuntime implements AutoCloseable {
     }
 
     public void listConfigs(CommandSender sender) {
-        queryList(sender, "configs", KnotLinkRequest.command("LIST_CONFIGS").conversation(), values -> {
+        queryList(sender, "catalog_configs", "list_configs_title", new Object[0],
+                KnotLinkRequest.command("LIST_CONFIGS").conversation(), values -> {
             List<String> ids = values.stream().map(value -> value.split(",", 2)[0].trim()).toList();
             suggestions.put("configs", ids);
         });
     }
 
     public void listFolders(CommandSender sender, String configId) {
-        queryList(sender, "folders", KnotLinkRequest.command("LIST_FOLDERS").conversation()
+        queryList(sender, "catalog_folders", "list_folders_title", new Object[]{configId},
+                KnotLinkRequest.command("LIST_FOLDERS").conversation()
                 .field("config_id", configId),
                 values -> suggestions.put("folders:" + configId, values));
     }
 
     public void listBackups(CommandSender sender, String configId, String folder) {
-        queryList(sender, "backups", KnotLinkRequest.command("LIST_BACKUPS").conversation()
+        queryList(sender, "catalog_backups", "list_backups_title", new Object[]{configId, folder},
+                KnotLinkRequest.command("LIST_BACKUPS").conversation()
                 .field("config_id", configId).field("folder", folder),
                 values -> suggestions.put("backups:" + configId + ":" + folder, values));
     }
@@ -263,10 +272,12 @@ public final class PluginRuntime implements AutoCloseable {
 
     private void queryList(
             CommandSender sender,
-            String label,
+            String catalogKey,
+            String titleKey,
+            Object[] titleArguments,
             KnotLinkRequest request,
             java.util.function.Consumer<List<String>> cache) {
-        messages.send(sender, "query_started", label);
+        messages.send(sender, "query_started", messages.text(sender, catalogKey));
         knotLink.query(request).whenComplete((response, error) -> platform.executeMain(() -> {
             if (error != null || !response.isOk()) {
                 messages.send(sender, "request_failed",
@@ -278,8 +289,8 @@ public final class PluginRuntime implements AutoCloseable {
             if (values.isEmpty()) {
                 messages.send(sender, "list_empty");
             } else {
-                messages.send(sender, "list_title", label);
-                values.forEach(value -> sender.sendMessage(" §7- §f" + value));
+                messages.send(sender, titleKey, titleArguments);
+                values.forEach(value -> messages.send(sender, "list_entry", value));
             }
         }));
     }
@@ -313,6 +324,7 @@ public final class PluginRuntime implements AutoCloseable {
             try {
                 PluginConfig loaded = configStore.load();
                 audit.reconfigure(loaded.logging());
+                messages.configure(loaded.localization());
                 config = loaded;
                 worldSave.setFreezeTimeout(Duration.ofSeconds(loaded.backup().freezeTimeoutSeconds()));
                 suggestions.clear();
@@ -335,19 +347,26 @@ public final class PluginRuntime implements AutoCloseable {
         KnotLinkClient.Status link = knotLink.status();
         lines.add(messages.text(sender, "status_title"));
         lines.add(messages.text(sender, "status_version", version()));
-        lines.add(messages.text(sender, "status_knotlink", link.connected() ? "connected" : "reconnecting"));
-        lines.add(messages.text(sender, "status_main", mainVersion));
+        lines.add(messages.text(sender, "status_knotlink", messages.text(sender,
+                link.connected() ? "state_connected" : "state_reconnecting")));
+        lines.add(messages.text(sender, "status_main", "unknown".equals(mainVersion)
+                ? messages.text(sender, "state_unknown") : mainVersion));
         lines.add(messages.text(sender, "status_operation", operations.active()
-                .map(value -> value.type() + "/" + value.phase() + " " + value.id()).orElse("idle")));
-        lines.add(messages.text(sender, "status_autosave", worldSave.status().frozen() ? "frozen" : "normal"));
+                .map(value -> messages.text(sender, "status_operation_active",
+                        messages.text(sender, operationKey(value.type())),
+                        messages.text(sender, phaseKey(value.phase())), value.id()))
+                .orElseGet(() -> messages.text(sender, "state_idle"))));
+        lines.add(messages.text(sender, "status_autosave", messages.text(sender,
+                worldSave.status().frozen() ? "state_frozen" : "state_normal")));
         AutoBackupScheduler.Status auto = autoBackup.status();
         lines.add(messages.text(sender, "status_auto", auto.enabled()
-                ? auto.intervalMinutes() + " min, next=" + auto.nextRun().map(Instant::toString).orElse("?")
-                : "disabled"));
+                ? messages.text(sender, "status_auto_enabled", auto.intervalMinutes(),
+                        auto.nextRun().map(Instant::toString).orElse("?"))
+                : messages.text(sender, "state_disabled")));
         Optional<DedicatedRestoreSession> last = dedicatedRestore.lastResult();
         lines.add(messages.text(sender, "status_sidecar", last
                 .map(value -> value.state() + (value.detail().isBlank() ? "" : ": " + value.detail()))
-                .orElse("none")));
+                .orElseGet(() -> messages.text(sender, "state_none"))));
         return List.copyOf(lines);
     }
 
@@ -384,6 +403,7 @@ public final class PluginRuntime implements AutoCloseable {
     }
 
     private void handleHandshake(Map<String, String> fields) {
+        // 握手只保留 5 秒且绑定 operation/world；旧信号或其他会话不能推进当前操作。
         String action = fields.get("action");
         String world = fields.get("world");
         String backendVersion = fields.get("version");
@@ -431,6 +451,7 @@ public final class PluginRuntime implements AutoCloseable {
                     active.id(), System.nanoTime() + HANDSHAKE_TTL_NANOS);
         }
         mainVersion = backendVersion;
+        broadcast("handshake_connected", backendVersion);
         UUID operationId = active.id();
         knotLink.query(KnotLinkRequest.command("HANDSHAKE_RESPONSE").conversation()
                         .field("mod_version", version()))
@@ -451,6 +472,7 @@ public final class PluginRuntime implements AutoCloseable {
             return;
         }
         operations.transition(operation.id(), OperationCoordinator.Phase.SAVING);
+        broadcast("backup_preparing");
         worldSave.saveAndFreeze(operation.id()).whenComplete((paths, error) -> {
             if (error != null) {
                 failOperation(operation, message(error));
@@ -459,7 +481,6 @@ public final class PluginRuntime implements AutoCloseable {
             knotLink.query(KnotLinkRequest.command("WORLD_SAVED").conversation(operation.id()))
                     .whenComplete((response, queryError) -> {
                         if (queryError != null || !response.isOk()) {
-                            platform.executeMain(() -> worldSave.unfreeze(operation.id()));
                             failOperation(operation, queryError == null
                                     ? response.displayMessage() : message(queryError));
                         } else {
@@ -477,6 +498,7 @@ public final class PluginRuntime implements AutoCloseable {
             return;
         }
         operations.transition(operation.id(), OperationCoordinator.Phase.SAVING);
+        broadcast("restore_preparing");
         worldSave.saveOnly().whenComplete((paths, saveError) -> {
             if (saveError != null) {
                 failOperation(operation, message(saveError));
@@ -491,8 +513,8 @@ public final class PluginRuntime implements AutoCloseable {
                         }
                         operations.transition(operation.id(), OperationCoordinator.Phase.SIDECAR_HANDOFF);
                         finish(operation, OperationCoordinator.Outcome.HANDOFF_ACCEPTED, "sidecar ready");
-                        platform.broadcast("§6[MineBackup] §eRestore handoff accepted; shutting down safely.");
-                        platform.disconnectPlayersAndShutdown("§6MineBackup restore is in progress. Reconnect later.");
+                        broadcast("restore_handoff");
+                        platform.disconnectPlayersAndShutdown(player -> messages.text(player, "restore_kick"));
                     });
         });
     }
@@ -506,11 +528,15 @@ public final class PluginRuntime implements AutoCloseable {
                 && operation.type() != OperationCoordinator.Type.TARGET_BACKUP) || !matches(operation, fields)) {
             return;
         }
-        platform.executeMain(() -> worldSave.unfreeze(operation.id()));
+        resumeAutosave(operation.id());
         finish(operation, outcome, detail);
-        platform.broadcast(outcome == OperationCoordinator.Outcome.FAILED
-                ? "§c[MineBackup] Backup failed: " + detail
-                : "§a[MineBackup] Backup completed: " + detail);
+        if (outcome == OperationCoordinator.Outcome.FAILED) {
+            broadcast("backup_failed", detail);
+        } else if (outcome == OperationCoordinator.Outcome.NO_CHANGES) {
+            broadcast("backup_no_changes");
+        } else {
+            broadcast("backup_success", detail);
+        }
         refreshCurrentBackups();
     }
 
@@ -538,8 +564,12 @@ public final class PluginRuntime implements AutoCloseable {
     private void armTimeout(OperationCoordinator.Operation operation, int seconds) {
         scheduler.schedule(() -> {
             if (operations.active().filter(value -> value.id().equals(operation.id())).isPresent()) {
-                platform.executeMain(() -> worldSave.unfreeze(operation.id()));
-                failOperation(operation, "operation timed out");
+                resumeAutosave(operation.id());
+                finish(operation, OperationCoordinator.Outcome.FAILED, "operation timed out");
+                String outerKey = operation.type() == OperationCoordinator.Type.RESTORE
+                        ? "restore_failed" : "operation_failed";
+                platform.broadcast(receiver -> messages.text(receiver, outerKey,
+                        messages.text(receiver, "operation_timeout")));
             }
         }, seconds, TimeUnit.SECONDS);
     }
@@ -555,6 +585,9 @@ public final class PluginRuntime implements AutoCloseable {
             OperationCoordinator.Outcome outcome,
             String detail) {
         if (operation != null && operations.complete(operation.id(), outcome, detail)) {
+            if (operation.type() == OperationCoordinator.Type.RESTORE) {
+                clearRestoreAnnouncements();
+            }
             audit.operation(operation, "finished:" + outcome, detail);
             completeWaiter(operation.id());
         }
@@ -564,9 +597,10 @@ public final class PluginRuntime implements AutoCloseable {
         if (operation == null) {
             return;
         }
-        platform.executeMain(() -> worldSave.unfreeze(operation.id()));
+        resumeAutosave(operation.id());
         finish(operation, OperationCoordinator.Outcome.FAILED, detail);
-        platform.broadcast("§c[MineBackup] Operation failed: " + detail);
+        broadcast(operation.type() == OperationCoordinator.Type.RESTORE
+                ? "restore_failed" : "operation_failed", detail);
     }
 
     private void completeWaiter(UUID id) {
@@ -580,8 +614,79 @@ public final class PluginRuntime implements AutoCloseable {
         return operations.active().filter(value -> value.id().equals(id)).orElse(null);
     }
 
+    private void announceRestoreCountdown(
+            OperationCoordinator.Operation operation,
+            String file,
+            int seconds) {
+        clearRestoreAnnouncements();
+        if (seconds <= 0) {
+            return;
+        }
+        platform.broadcast(receiver -> messages.text(receiver, "restore_countdown_started", seconds,
+                file.isBlank() ? messages.text(receiver, "state_latest_backup") : file));
+        broadcast("restore_controls");
+        // 长倒计时仅播报关键节点，最后五秒逐秒提示，避免刷屏。
+        for (int remaining : List.of(60, 30, 10, 5, 4, 3, 2, 1)) {
+            int delay = seconds - remaining;
+            if (delay <= 0) {
+                continue;
+            }
+            ScheduledFuture<?> future = scheduler.schedule(() -> {
+                boolean pending = operations.active()
+                        .filter(value -> value.id().equals(operation.id()))
+                        .filter(value -> value.phase() == OperationCoordinator.Phase.COUNTDOWN)
+                        .isPresent();
+                if (pending) {
+                    broadcast("restore_countdown_tick", remaining);
+                }
+            }, delay, TimeUnit.SECONDS);
+            synchronized (restoreAnnouncementLock) {
+                restoreAnnouncements.add(future);
+            }
+        }
+    }
+
+    private void clearRestoreAnnouncements() {
+        synchronized (restoreAnnouncementLock) {
+            restoreAnnouncements.forEach(future -> future.cancel(false));
+            restoreAnnouncements.clear();
+        }
+    }
+
+    private void resumeAutosave(UUID operationId) {
+        platform.executeMain(() -> {
+            if (worldSave.unfreeze(operationId)) {
+                broadcast("autosave_resumed");
+            }
+        });
+    }
+
+    private void broadcast(String key, Object... arguments) {
+        platform.broadcast(receiver -> messages.text(receiver, key, arguments));
+    }
+
+    private static String operationKey(OperationCoordinator.Type type) {
+        return switch (type) {
+            case SAVE -> "operation_save";
+            case CURRENT_BACKUP -> "operation_current_backup";
+            case TARGET_BACKUP -> "operation_target_backup";
+            case RESTORE -> "operation_restore";
+        };
+    }
+
+    private static String phaseKey(OperationCoordinator.Phase phase) {
+        return switch (phase) {
+            case COUNTDOWN -> "phase_countdown";
+            case SUBMITTED -> "phase_submitted";
+            case SAVING -> "phase_saving";
+            case WAITING_BACKEND -> "phase_waiting_backend";
+            case SIDECAR_HANDOFF -> "phase_sidecar_handoff";
+        };
+    }
+
     private PendingHandshake consumeHandshake(String action, String world) {
         synchronized (handshakeLock) {
+            // 无论匹配与否都一次性消费，拒绝重放同一 pre_hot_* 信号。
             PendingHandshake current = pendingHandshake;
             pendingHandshake = null;
             if (current == null || System.nanoTime() > current.expiresAtNanos()
@@ -659,6 +764,7 @@ public final class PluginRuntime implements AutoCloseable {
 
     @Override
     public void close() {
+        clearRestoreAnnouncements();
         autoBackup.close();
         worldSave.close();
         knotLink.close();

@@ -3,11 +3,14 @@ package com.leafuke.minebackup.plugin.platform;
 import com.leafuke.minebackup.plugin.runtime.WorldAccess;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 
 public final class BukkitWorldAccess implements WorldAccess {
     private final JavaPlugin plugin;
@@ -35,13 +38,20 @@ public final class BukkitWorldAccess implements WorldAccess {
         return Bukkit.getWorlds().stream().map(BukkitWorld::new).map(ManagedWorld.class::cast).toList();
     }
 
-    public void broadcast(String message) {
-        executeMain(() -> Bukkit.broadcastMessage(message));
+    /**
+     * 逐接收者生成文本，而不是先用命令发起者的语言渲染一次再群发。
+     * 这样同服中英文客户端以及控制台都能得到自己的语言版本。
+     */
+    public void broadcast(Function<CommandSender, String> message) {
+        executeMain(() -> {
+            Bukkit.getConsoleSender().sendMessage(message.apply(Bukkit.getConsoleSender()));
+            Bukkit.getOnlinePlayers().forEach(player -> player.sendMessage(message.apply(player)));
+        });
     }
 
-    public void disconnectPlayersAndShutdown(String message) {
+    public void disconnectPlayersAndShutdown(Function<Player, String> message) {
         executeMain(() -> {
-            Bukkit.getOnlinePlayers().forEach(player -> player.kickPlayer(message));
+            Bukkit.getOnlinePlayers().forEach(player -> player.kickPlayer(message.apply(player)));
             Bukkit.shutdown();
         });
     }
