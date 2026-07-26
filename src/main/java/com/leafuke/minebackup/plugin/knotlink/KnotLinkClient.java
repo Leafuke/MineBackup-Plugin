@@ -132,8 +132,7 @@ public final class KnotLinkClient implements AutoCloseable {
             boolean reconnect = clearSubscriber(candidate);
             if (reconnect) {
                 int delay = nextDelay();
-                logger.log(Level.WARNING, "KnotLink signal connection failed; retrying in " + delay + "s",
-                        exception);
+                logReconnectFailure("KnotLink signal connection failed", delay, exception);
                 scheduleConnect(delay);
             }
         }
@@ -159,8 +158,20 @@ public final class KnotLinkClient implements AutoCloseable {
             return;
         }
         int delay = nextDelay();
-        logger.log(Level.WARNING, "KnotLink signal channel disconnected; retrying in " + delay + "s", cause);
+        logReconnectFailure("KnotLink signal channel disconnected", delay, cause);
         scheduleConnect(delay);
+    }
+
+    private void logReconnectFailure(String message, int delaySeconds, Throwable cause) {
+        String retryMessage = message + "; retrying in " + delaySeconds + "s";
+        if (delaySeconds == 1) {
+            logger.log(Level.WARNING, retryMessage, cause);
+            return;
+        }
+        String detail = cause == null || cause.getMessage() == null
+                ? ""
+                : ": " + cause.getMessage();
+        logger.warning(retryMessage + detail);
     }
 
     private boolean clearSubscriber(SignalSubscriber candidate) {

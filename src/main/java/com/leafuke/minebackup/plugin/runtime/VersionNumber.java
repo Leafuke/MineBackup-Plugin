@@ -1,19 +1,27 @@
 package com.leafuke.minebackup.plugin.runtime;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class VersionNumber {
+    private static final Pattern VERSION_PATTERN = Pattern.compile(
+            "^[vV]?(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?(?:[-+].*)?$");
+
     private VersionNumber() {
     }
 
     public static boolean isAtLeast(String actual, String minimum) {
-        List<Integer> left = parts(actual);
-        List<Integer> right = parts(minimum);
-        int size = Math.max(left.size(), right.size());
-        for (int index = 0; index < size; index++) {
-            int a = index < left.size() ? left.get(index) : 0;
-            int b = index < right.size() ? right.get(index) : 0;
+        Optional<int[]> actualParts = parts(actual);
+        Optional<int[]> minimumParts = parts(minimum);
+        if (actualParts.isEmpty() || minimumParts.isEmpty()) {
+            return false;
+        }
+        int[] left = actualParts.orElseThrow();
+        int[] right = minimumParts.orElseThrow();
+        for (int index = 0; index < left.length; index++) {
+            int a = left[index];
+            int b = right[index];
             if (a != b) {
                 return a > b;
             }
@@ -21,21 +29,23 @@ public final class VersionNumber {
         return true;
     }
 
-    private static List<Integer> parts(String value) {
+    private static Optional<int[]> parts(String value) {
         if (value == null || value.isBlank()) {
-            return List.of();
+            return Optional.empty();
         }
-        List<Integer> result = new ArrayList<>();
-        for (String part : value.trim().split("[.-]")) {
-            if (!part.chars().allMatch(Character::isDigit)) {
-                break;
-            }
-            try {
-                result.add(Integer.parseInt(part));
-            } catch (NumberFormatException exception) {
-                result.add(Integer.MAX_VALUE);
-            }
+        Matcher matcher = VERSION_PATTERN.matcher(value.trim());
+        if (!matcher.matches()) {
+            return Optional.empty();
         }
-        return List.copyOf(result);
+        int[] result = new int[3];
+        try {
+            for (int index = 0; index < result.length; index++) {
+                String component = matcher.group(index + 1);
+                result[index] = component == null ? 0 : Integer.parseInt(component);
+            }
+        } catch (NumberFormatException exception) {
+            return Optional.empty();
+        }
+        return Optional.of(result);
     }
 }
