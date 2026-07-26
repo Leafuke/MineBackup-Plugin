@@ -42,15 +42,26 @@ public final class WorldSaveController implements AutoCloseable {
     public CompletableFuture<List<Path>> saveOnly() {
         CompletableFuture<List<Path>> result = new CompletableFuture<>();
         worlds.executeMain(() -> {
+            Map<UUID, Boolean> captured = new LinkedHashMap<>();
+            List<Path> paths = List.of();
+            Throwable failure = null;
             try {
+                List<WorldAccess.ManagedWorld> loaded = pauseLoadedWorlds(captured);
                 worlds.savePlayers();
-                List<WorldAccess.ManagedWorld> loaded = List.copyOf(worlds.loadedWorlds());
                 for (WorldAccess.ManagedWorld world : loaded) {
                     world.save();
                 }
-                result.complete(loaded.stream().map(WorldAccess.ManagedWorld::directory).distinct().toList());
+                paths = loaded.stream().map(WorldAccess.ManagedWorld::directory).distinct().toList();
             } catch (Throwable exception) {
-                result.completeExceptionally(exception);
+                failure = exception;
+            } finally {
+                // 普通保存只在同步写盘期间短暂停止自动保存，结束后无条件恢复原值。
+                restoreCaptured(captured);
+            }
+            if (failure == null) {
+                result.complete(paths);
+            } else {
+                result.completeExceptionally(failure);
             }
         });
         return result;
@@ -67,14 +78,12 @@ public final class WorldSaveController implements AutoCloseable {
                         throw new IllegalStateException("World autosave is already frozen");
                     }
                 }
+                // 必须先暂停自动保存再写盘：避免 Paper 的自动保存与插件快照交错，
+                // 同时也不会触发“auto-save 开启时插件手动保存”的性能提示。
+                List<WorldAccess.ManagedWorld> loaded = pauseLoadedWorlds(captured);
                 worlds.savePlayers();
-                List<WorldAccess.ManagedWorld> loaded = List.copyOf(worlds.loadedWorlds());
                 for (WorldAccess.ManagedWorld world : loaded) {
                     world.save();
-                }
-                for (WorldAccess.ManagedWorld world : loaded) {
-                    captured.put(world.id(), world.autoSave());
-                    world.autoSave(false);
                 }
                 synchronized (lock) {
                     frozenFor = operationId;
@@ -107,6 +116,15 @@ public final class WorldSaveController implements AutoCloseable {
         }
         restoreCaptured(restore);
         return true;
+    }
+
+    private List<WorldAccess.ManagedWorld> pauseLoadedWorlds(Map<UUID, Boolean> captured) {
+        List<WorldAccess.ManagedWorld> loaded = List.copyOf(worlds.loadedWorlds());
+        for (WorldAccess.ManagedWorld world : loaded) {
+            captured.put(world.id(), world.autoSave());
+            world.autoSave(false);
+        }
+        return loaded;
     }
 
     public Status status() {

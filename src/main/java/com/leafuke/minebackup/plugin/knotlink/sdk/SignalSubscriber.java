@@ -7,6 +7,7 @@
 package com.leafuke.minebackup.plugin.knotlink.sdk;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -50,7 +51,9 @@ public final class SignalSubscriber implements AutoCloseable {
         if (stopping.get() || !started.compareAndSet(false, true)) {
             throw new IOException("KnotLink signal subscriber cannot be started");
         }
-        TcpClient candidate = new TcpClient(TcpClient.FrameFormat.MAGIC_V2);
+        // 信号通道可能长时间空闲；零读取超时表示无限等待，不能每三分钟误判断连。
+        TcpClient candidate = new TcpClient(
+                Duration.ZERO, TcpClient.FrameFormat.MAGIC_V2, TcpClient.DEFAULT_MAX_MESSAGE_BYTES);
         client = candidate;
         candidate.setDataReceivedListener(data -> signalListener.accept(data));
         candidate.setClosedListener(cause -> {

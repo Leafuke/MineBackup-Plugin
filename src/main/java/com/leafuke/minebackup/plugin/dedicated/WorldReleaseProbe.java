@@ -13,6 +13,7 @@ public final class WorldReleaseProbe {
     }
 
     public static boolean isReleased(Path root) {
+        // 只进行可写/可加锁探测，不修改任何世界内容；最终还需 ReleaseGate 连续采样确认。
         return canAcquire(root.resolve("session.lock"))
                 && canWrite(root.resolve("level.dat"))
                 && canWrite(root.resolve("level.dat_old"))

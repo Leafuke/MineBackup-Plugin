@@ -51,6 +51,19 @@ class WorldSaveControllerTest {
         assertTrue(access.worlds.stream().allMatch(world -> world.autoSave));
     }
 
+    @Test
+    void ordinarySavePausesAutosaveOnlyWhileWriting() throws Exception {
+        FakeAccess access = new FakeAccess();
+        FakeWorld world = new FakeWorld("world", true);
+        access.worlds.add(world);
+        WorldSaveController controller = new WorldSaveController(access, scheduler, Duration.ofMinutes(3));
+
+        controller.saveOnly().get();
+
+        assertTrue(world.wasPausedDuringSave);
+        assertTrue(world.autoSave);
+    }
+
     private static final class FakeAccess implements WorldAccess {
         final List<FakeWorld> worlds = new ArrayList<>();
 
@@ -74,6 +87,7 @@ class WorldSaveControllerTest {
         final String name;
         boolean autoSave;
         boolean failSave;
+        boolean wasPausedDuringSave;
 
         FakeWorld(String name, boolean autoSave) {
             this.name = name;
@@ -83,7 +97,10 @@ class WorldSaveControllerTest {
         @Override public UUID id() { return id; }
         @Override public String name() { return name; }
         @Override public Path directory() { return Path.of(name); }
-        @Override public void save() { if (failSave) throw new IllegalStateException("save failed"); }
+        @Override public void save() {
+            wasPausedDuringSave = !autoSave;
+            if (failSave) throw new IllegalStateException("save failed");
+        }
         @Override public boolean autoSave() { return autoSave; }
         @Override public void autoSave(boolean enabled) { autoSave = enabled; }
     }

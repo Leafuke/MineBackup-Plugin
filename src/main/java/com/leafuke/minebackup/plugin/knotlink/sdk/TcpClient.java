@@ -25,6 +25,7 @@ public final class TcpClient implements AutoCloseable {
 
     private final Duration readTimeout;
     private final int maxMessageBytes;
+    // 生命周期锁保护 socket/reader 的替换，写锁保证并发请求不会交错写坏同一帧。
     private final Object lifecycleLock = new Object();
     private final Object writeLock = new Object();
     private final AtomicBoolean closedNotified = new AtomicBoolean();
@@ -42,7 +43,8 @@ public final class TcpClient implements AutoCloseable {
     public TcpClient(Duration readTimeout, FrameFormat frameFormat, int maxMessageBytes) {
         this.readTimeout = Objects.requireNonNull(readTimeout, "readTimeout");
         Objects.requireNonNull(frameFormat, "frameFormat");
-        if (readTimeout.isZero() || readTimeout.isNegative() || readTimeout.toMillis() > Integer.MAX_VALUE) {
+        // Duration.ZERO 映射为 Socket 的 0 超时，即长连接永久等待；负数仍非法。
+        if (readTimeout.isNegative() || readTimeout.toMillis() > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("readTimeout is invalid");
         }
         if (maxMessageBytes < 1) {
@@ -157,6 +159,7 @@ public final class TcpClient implements AutoCloseable {
             } catch (IOException ignored) {
             }
         }
+        // 无论读线程、调用方还是连接失败先触发关闭，断连回调都只能通知一次。
         Consumer<Throwable> listener = closedListener;
         if (listener != null && closedNotified.compareAndSet(false, true)) {
             listener.accept(cause);

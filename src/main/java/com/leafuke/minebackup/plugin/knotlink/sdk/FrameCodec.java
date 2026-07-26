@@ -16,6 +16,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 final class FrameCodec {
+    // KnotLink 2.0 帧：4 字节魔数 + 4 字节大端长度 + 严格 UTF-8 载荷。
+    // 长度必须在分配内存前校验，否则恶意或损坏帧可造成超大数组分配。
     static final byte[] MAGIC_V2 = {0x4B, 0x4B, 0x00, 0x02};
 
     private FrameCodec() {
@@ -57,6 +59,7 @@ final class FrameCodec {
     }
 
     private static byte[] readFully(InputStream input, int length, boolean allowCleanEof) throws IOException {
+        // TCP 没有消息边界；一次 read 可能只返回半个帧，也可能连续收到多个帧。
         byte[] data = new byte[length];
         int offset = 0;
         while (offset < length) {

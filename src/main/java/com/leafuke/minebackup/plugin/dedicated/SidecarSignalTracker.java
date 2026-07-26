@@ -16,6 +16,7 @@ final class SidecarSignalTracker {
     }
 
     synchronized void accept(Map<String, String> fields) {
+        // Sidecar 会接收到总线上的所有信号，必须先按请求和世界过滤再接受终态。
         String signalRequest = fields.get("request_id");
         if (signalRequest != null && !signalRequest.equals(requestId.toString())) {
             return;

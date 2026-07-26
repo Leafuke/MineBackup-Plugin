@@ -29,6 +29,7 @@ public final class OperationCoordinator {
     }
 
     public synchronized Optional<Operation> begin(Type type, Origin origin, String actor, String target) {
+        // 所有会改变存档的动作共用一个门，避免保存、备份和还原互相穿插。
         return begin(UUID.randomUUID(), type, origin, actor, target, Phase.SUBMITTED);
     }
 
@@ -90,6 +91,7 @@ public final class OperationCoordinator {
             submit = countdownSubmit;
             countdownSubmit = null;
         }
+        // 回调可能执行网络请求，必须在释放 synchronized 锁后调用，防止重入死锁。
         submit.accept(id);
         return true;
     }

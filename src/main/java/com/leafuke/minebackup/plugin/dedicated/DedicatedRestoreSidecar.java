@@ -13,6 +13,10 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 独立于 Bukkit 的纯 JDK 还原进程。主服务端停止后，只有它可以确认世界文件已释放、
+ * 通知 FolderRewind 开始覆盖，并在明确终态后启动一次服务器脚本。
+ */
 public final class DedicatedRestoreSidecar {
     private static final String HOST = "127.0.0.1";
     private static final String APP_ID = "0x00000020";
@@ -71,6 +75,7 @@ public final class DedicatedRestoreSidecar {
                     uncertain(store, original, "Timed out waiting for all world files to be released");
                     return;
                 }
+                // “父 JVM 已退出”是硬条件；文件探测只是 Windows 锁与延迟释放的第二重确认。
                 boolean parentExited = ProcessHandle.of(original.parentPid())
                         .map(handle -> !handle.isAlive()).orElse(true);
                 boolean worldsReleased = original.worldPaths().stream().allMatch(WorldReleaseProbe::isReleased);
@@ -92,6 +97,7 @@ public final class DedicatedRestoreSidecar {
             }
             store.writeActive(original.withState(DedicatedRestoreSession.State.RELEASE_ACKNOWLEDGED, ""));
 
+            // 绝不依据静默推断成功；断连、超时或未知终态一律保持服务器离线。
             while (signals.terminal().isEmpty()) {
                 if (disconnected.get() || System.nanoTime() >= deadline) {
                     uncertain(store, original, "No explicit restore terminal signal");

@@ -7,11 +7,21 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class FrameCodecTest {
+    @Test
+    void permitsInfiniteReadTimeoutForLongLivedSignalConnections() {
+        assertDoesNotThrow(() -> new TcpClient(
+                Duration.ZERO, TcpClient.FrameFormat.MAGIC_V2, 1_024).close());
+        assertThrows(IllegalArgumentException.class, () -> new TcpClient(
+                Duration.ofSeconds(-1), TcpClient.FrameFormat.MAGIC_V2, 1_024));
+    }
+
     @Test
     void readsFragmentedUtf8Frame() throws Exception {
         byte[] frame = FrameCodec.encode("你好, KnotLink", 1_024);
