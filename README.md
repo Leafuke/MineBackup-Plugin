@@ -2,13 +2,14 @@
 
 MineBackupPlugin 是 MineBackup/FolderRewind 的 Spigot、Paper 服务端联动版本。插件不自行存储备份；它负责安全保存 Minecraft 世界、通过 KnotLink v2 请求 FolderRewind 执行备份，并在还原时把停服后的文件所有权交给独立 Sidecar。
 
+完整的安装、命令、配置和 Sidecar 流程见 [FolderRewind Minecraft 文档中的 MineBackupPlugin 说明](https://folderrewind.top/docs/guides/minecraft/minebackup-plugin)。
+
 ## 支持范围
 
-- Minecraft `1.21.1`～`26.1.2`
+- Minecraft `1.21.1`～`26.2`
 - Spigot、Paper 及保持 Bukkit/Spigot API 兼容的服务端
-- 一个 Java 21 字节码 JAR；Minecraft 26.1 服务端可在 Java 25 上运行同一 JAR
-- FolderRewind `1.14.0` 或更高版本
-- KnotLink SDK 2.0 魔数帧格式，仅连接本机 `127.0.0.1:6372/6376`
+- 一个 Java 21 字节码 JAR；Minecraft 26.2 服务端可在 Java 25 上运行同一 JAR
+- FolderRewind `1.16.0` 或更高版本
 
 KnotLink 不可用时插件仍会加载并自动重连，`/mb save` 仍可用；依赖 FolderRewind 的命令会返回通信错误。
 
@@ -16,7 +17,7 @@ KnotLink 不可用时插件仍会加载并自动重连，`/mb save` 仍可用；
 
 1. 将 JAR 放入服务端 `plugins` 目录。
 2. 启动服务器，检查 `plugins/MineBackupPlugin/config.yml`。
-3. 确保 FolderRewind、Minecraft 专用扩展和 KnotLink 正在同一台计算机运行。
+3. 确保 MineBackup 或者 FolderRewind、Minecraft 专用扩展和 KnotLink 正在同一台计算机运行。
 4. 执行 `/mb status` 检查连接和 Sidecar 状态。
 
 语言配置位于 `config.yml`：

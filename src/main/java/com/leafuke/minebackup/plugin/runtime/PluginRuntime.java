@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
 public final class PluginRuntime implements AutoCloseable {
-    private static final String MINIMUM_MAIN_VERSION = "1.14.0";
+    private static final String MINIMUM_MAIN_VERSION = "1.16.0";
     private static final long HANDSHAKE_TTL_NANOS = Duration.ofSeconds(5).toNanos();
 
     private final JavaPlugin plugin;
